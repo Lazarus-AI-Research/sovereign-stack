@@ -1,0 +1,4 @@
+# Validated against schemas/eval-suite.schema.json.
+name: omni-embedding
+description: Omni embedding evaluation: cross-modal retrieval and validation
+checks: []  # TODO (design.md §19)

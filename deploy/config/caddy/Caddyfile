@@ -1,0 +1,24 @@
+# Sovereign Stack ingress. Only Caddy is externally exposed (design.md §22).
+# TODO: production TLS / domain configuration, managed by Sovereign Control.
+
+:80 {
+	# Sovereign Control admin UI and API
+	handle /control/* {
+		uri strip_prefix /control
+		reverse_proxy sovereign-control:8080
+	}
+	handle /api/control/* {
+		reverse_proxy sovereign-control:8080
+	}
+
+	# Branding assets
+	handle /branding/* {
+		root * /srv
+		file_server
+	}
+
+	# Sovereign Workspace (default UI)
+	handle {
+		reverse_proxy sovereign-workspace:3001
+	}
+}

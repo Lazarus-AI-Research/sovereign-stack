@@ -1,0 +1,4 @@
+# Validated against schemas/eval-suite.schema.json.
+name: full
+description: Full benchmark: prompt/output/concurrency sweeps, mixed-role pressure
+checks: []  # TODO (design.md §19)

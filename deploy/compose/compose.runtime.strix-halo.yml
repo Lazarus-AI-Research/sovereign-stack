@@ -1,0 +1,15 @@
+# Runtime overlay: AMD Strix Halo / Ryzen AI Max+ 395 (ROCm, unified memory).
+services:
+  sovereign-runtime:
+    image: docker.io/lazarus-ai-research/sovereign-runtime:rocm-strix-halo-${SOVEREIGN_VERSION}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      SOVEREIGN_PROFILE: rocm-strix-halo
+      VLLM_BACKEND: rocm

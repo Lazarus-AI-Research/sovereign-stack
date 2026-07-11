@@ -1,0 +1,10 @@
+# Runtime overlay: NVIDIA CUDA x86_64 (design.md §8.2).
+services:
+  sovereign-runtime:
+    image: docker.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-${SOVEREIGN_VERSION}
+    gpus: all
+    ipc: host
+    environment:
+      SOVEREIGN_PROFILE: cuda-x86_64
+      VLLM_BACKEND: cuda
+      NVIDIA_VISIBLE_DEVICES: all

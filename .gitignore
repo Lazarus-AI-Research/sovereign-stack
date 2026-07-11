@@ -1,0 +1,26 @@
+# Environment / secrets
+.env
+deploy/.env
+
+# Go
+bin/
+*.test
+
+# Web frontend
+node_modules/
+control/web/dist/
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+evals/dist/
+evals/build/
+
+# Runtime artifacts on the appliance host
+deploy/models/
+deploy/logs/
+deploy/reports/
+
+# OS
+.DS_Store

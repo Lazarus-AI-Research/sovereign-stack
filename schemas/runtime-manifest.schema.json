@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lazarus.ai/sovereign/runtime-manifest.schema.json",
+  "title": "Sovereign Runtime Manifest",
+  "description": "TODO: full schema (see design.md).",
+  "type": "object"
+}

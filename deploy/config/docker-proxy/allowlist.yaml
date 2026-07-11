@@ -1,0 +1,21 @@
+# Sovereign Docker Proxy allowlist (design.md §3.6, §22).
+# The proxy exposes only these operations, services, and image namespaces.
+
+allowed_project: sovereign-stack
+
+allowed_image_prefixes:
+  - docker.io/lazarus-ai-research/
+
+allowed_services:
+  - sovereign-runtime
+  - sovereign-gateway
+  - sovereign-workspace
+  - sovereign-evals
+
+allowed_operations:
+  - inspect
+  - list
+  - restart
+  - pull
+  - logs
+  - run-evals

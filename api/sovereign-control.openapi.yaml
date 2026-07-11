@@ -1,0 +1,35 @@
+# Sovereign Control API (design.md §18). Scaffold — endpoints to be filled in
+# as they are implemented; §18 is the authoritative surface list.
+openapi: 3.1.0
+
+info:
+  title: Sovereign Control API
+  version: 0.1.0
+  description: >
+    Customer-facing control plane for Lazarus Sovereign Stack.
+    Base path: /api/control/v1
+
+servers:
+  - url: /api/control/v1
+
+paths:
+  /health:
+    get:
+      summary: Control-plane health
+      operationId: getHealth
+      responses:
+        "200":
+          description: Sovereign Control is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  version:
+                    type: string
+
+  # TODO (design.md §18): /status /version, hardware, runtime, runtime roles,
+  # models, embedding-profiles, indexes, gateway, workspace, evals, backups,
+  # bundles.

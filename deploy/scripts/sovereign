@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# sovereign — appliance management CLI.
+#
+# Runs docker compose with the project directory pinned to deploy/ so that
+# relative volume paths (./config/...) and .env resolve there regardless of
+# where this script is invoked from.
+set -euo pipefail
+
+DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="${SOVEREIGN_PROFILE:-cpu}"
+
+compose() {
+  docker compose \
+    --project-directory "$DEPLOY_ROOT" \
+    -f "$DEPLOY_ROOT/compose/compose.yml" \
+    -f "$DEPLOY_ROOT/compose/compose.runtime.${PROFILE}.yml" \
+    "$@"
+}
+
+usage() {
+  cat <<EOF
+Usage: sovereign <command>
+
+  up        Start the stack (SOVEREIGN_PROFILE=cuda|dgx-spark|rocm|strix-halo|xpu|metal|cpu; default: cpu)
+  down      Stop the stack
+  status    Show service status
+  logs      Tail service logs (extra args passed to docker compose logs)
+  validate  Validate the compose configuration
+EOF
+}
+
+if [[ ! -f "$DEPLOY_ROOT/.env" ]]; then
+  echo "error: $DEPLOY_ROOT/.env not found — copy .env.example and edit it" >&2
+  exit 1
+fi
+
+case "${1:-help}" in
+  up)       compose up -d ;;
+  down)     compose down ;;
+  status)   compose ps ;;
+  logs)     shift; compose logs "$@" ;;
+  validate) compose config -q && echo "compose configuration valid (profile: $PROFILE)" ;;
+  help|*)   usage ;;
+esac

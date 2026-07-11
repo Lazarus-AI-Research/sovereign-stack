@@ -1,0 +1,14 @@
+# Runtime overlay: Intel XPU x86_64 (design.md §8.2).
+services:
+  sovereign-runtime:
+    image: docker.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-${SOVEREIGN_VERSION}
+    devices:
+      - /dev/dri
+    group_add:
+      - video
+      - render
+    environment:
+      SOVEREIGN_PROFILE: xpu-x86_64
+      VLLM_BACKEND: xpu
+      ZE_ENABLE_PCI_ID_DEVICE_ORDER: "1"
+      ONEAPI_DEVICE_SELECTOR: ${ONEAPI_DEVICE_SELECTOR:-level_zero:gpu}

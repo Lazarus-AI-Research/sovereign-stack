@@ -1,0 +1,9 @@
+# Runtime overlay: Apple Metal arm64 (design.md §8.2).
+# Requires Docker Desktop; host-integration details stay inside the runtime
+# image and contract (design.md §2.6).
+services:
+  sovereign-runtime:
+    image: docker.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
+    environment:
+      SOVEREIGN_PROFILE: metal-arm64
+      VLLM_BACKEND: metal

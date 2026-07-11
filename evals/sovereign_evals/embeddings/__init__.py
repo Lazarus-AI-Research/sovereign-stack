@@ -1,0 +1,1 @@
+"""Sovereign Evals: embeddings (scaffold)."""

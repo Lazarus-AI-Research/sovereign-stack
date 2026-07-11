@@ -1,0 +1,24 @@
+[project]
+name = "sovereign-evals"
+version = "0.1.0.dev0"
+description = "Sovereign Stack evaluation, benchmark, and conformance suites"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+sovereign-evals = "sovereign_evals.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sovereign_evals"]

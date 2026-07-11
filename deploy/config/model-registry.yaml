@@ -1,0 +1,16 @@
+# Model registry, managed by Sovereign Control.
+# Validated against schemas/model-registry.schema.json.
+# Revisions must be pinned to immutable commits in production.
+
+models:
+  - id: assistant-large
+    role: generation
+    source: huggingface
+    model: Qwen/Qwen3-32B-AWQ
+    revision: "<immutable-revision>"
+
+  - id: embedding-omni-default
+    role: embedding
+    source: huggingface
+    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
+    revision: "<immutable-revision>"

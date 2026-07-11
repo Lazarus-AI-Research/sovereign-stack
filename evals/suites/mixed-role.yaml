@@ -1,0 +1,4 @@
+# Validated against schemas/eval-suite.schema.json.
+name: mixed-role
+description: Mixed generation/embedding workload benchmark
+checks: []  # TODO (design.md §19)

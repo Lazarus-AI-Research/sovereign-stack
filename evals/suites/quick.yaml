@@ -1,0 +1,4 @@
+# Validated against schemas/eval-suite.schema.json.
+name: quick
+description: Quick benchmark: latency, throughput, basic concurrency
+checks: []  # TODO (design.md §19)

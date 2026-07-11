@@ -1,0 +1,26 @@
+# Embedding profiles (design.md §10).
+# Validated against schemas/embedding-profile.schema.json.
+# Output dimensions are discovered and validated from the loaded checkpoint —
+# never inferred from the model name (design.md §10.1).
+
+embedding_profiles:
+  omni-default:
+    provider: sovereign-runtime
+    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
+    revision: "<immutable-commit>"
+    served_model_name: embedding-omni-default
+    pooling: last
+    normalization: l2
+    modalities:
+      - text
+      - image
+      - audio
+      - video
+
+  text-compact:
+    provider: sovereign-runtime
+    model: "<validated-text-embedding-model>"
+    revision: "<immutable-commit>"
+    served_model_name: embedding-text-compact
+    modalities:
+      - text

@@ -1,0 +1,16 @@
+# Product feature flags, managed by Sovereign Control.
+# Validated against schemas/feature-flags.schema.json.
+# Privacy defaults are locked by design.md §2.3–2.4.
+
+phoenix:
+  enabled: true
+
+tracing:
+  enabled: true
+  metadata_only: true
+  full_trace: false
+  prompt_logging: false
+  response_logging: false
+
+prompt_logging:
+  enabled: false

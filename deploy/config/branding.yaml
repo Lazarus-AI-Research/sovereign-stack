@@ -1,0 +1,8 @@
+# Customer-facing branding, applied by Sovereign Control.
+# Validated against schemas/branding.schema.json.
+product_name: Sovereign Stack
+company_name: Lazarus AI Research
+logo: /branding/logo.svg
+colors:
+  primary: "#1a1a2e"
+  accent: "#e94560"

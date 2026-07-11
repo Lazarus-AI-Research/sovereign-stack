@@ -1,0 +1,4 @@
+# Validated against schemas/eval-suite.schema.json.
+name: smoke
+description: Startup and end-to-end smoke checks
+checks: []  # TODO (design.md §19)

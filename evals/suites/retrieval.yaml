@@ -1,0 +1,4 @@
+# Validated against schemas/eval-suite.schema.json.
+name: retrieval
+description: Retrieval evaluation against pgvector
+checks: []  # TODO (design.md §19)

@@ -1,0 +1,20 @@
+# Sovereign Observe metrics scraping (design.md §21).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: sovereign-runtime
+    static_configs:
+      - targets: ["sovereign-runtime:8000"]
+
+  - job_name: sovereign-gateway
+    static_configs:
+      - targets: ["sovereign-gateway:4000"]
+
+  - job_name: sovereign-control
+    static_configs:
+      - targets: ["sovereign-control:8080"]

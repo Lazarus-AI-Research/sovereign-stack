@@ -1,0 +1,1 @@
+"""Sovereign Evals: retrieval (scaffold)."""

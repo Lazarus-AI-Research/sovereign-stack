@@ -1,0 +1,24 @@
+# Sovereign Gateway (LiteLLM) configuration (design.md §15).
+# This file is generated and managed by Sovereign Control; do not hand-edit on
+# a running appliance. Remote and cloud models are added through Sovereign
+# Control. The LiteLLM UI is never exposed (design.md §2.2).
+
+model_list:
+  - model_name: assistant-large
+    litellm_params:
+      model: openai/assistant-large
+      api_base: http://sovereign-runtime:8000/v1
+      api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
+
+  - model_name: embedding-omni-default
+    litellm_params:
+      model: openai/embedding-omni-default
+      api_base: http://sovereign-runtime:8000/v1
+      api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
