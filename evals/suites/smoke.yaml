@@ -1,4 +1,35 @@
+# Startup and end-to-end smoke suite (design.md §19.1).
 # Validated against schemas/eval-suite.schema.json.
+#
+# target: runtime — direct to Sovereign Runtime
+# target: gateway — through LiteLLM (the product path; §16 requires both)
+
 name: smoke
-description: Startup and end-to-end smoke checks
-checks: []  # TODO (design.md §19)
+description: Startup and end-to-end smoke checks (design.md §19.1)
+
+checks:
+  - type: runtime-liveness
+  - type: runtime-readiness
+  - type: runtime-roles-loaded
+  - type: runtime-manifest-valid
+
+  - type: chat-completion
+    id: chat-direct
+    params: { target: runtime }
+  - type: chat-streaming
+    id: streaming-direct
+    params: { target: runtime }
+  - type: text-embedding
+    id: embedding-direct
+    params: { target: runtime }
+
+  - type: chat-completion
+    id: chat-via-gateway
+    params: { target: gateway }
+  - type: text-embedding
+    id: embedding-via-gateway
+    params: { target: gateway }
+  - type: gateway-models
+
+  - type: pgvector-roundtrip
+  - type: metrics-available

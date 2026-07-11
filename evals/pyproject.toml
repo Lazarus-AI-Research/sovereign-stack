@@ -7,6 +7,7 @@ dependencies = [
     "httpx",
     "pyyaml",
     "jsonschema",
+    "psycopg[binary]",
 ]
 
 [project.optional-dependencies]

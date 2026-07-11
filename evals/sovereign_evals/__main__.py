@@ -46,8 +46,23 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
 
 
 def _cmd_suite(args: argparse.Namespace) -> int:
-    print(f"suite runner not implemented yet (M5): {args.suite}", file=sys.stderr)
-    return 1
+    from sovereign_evals.endpoints import Endpoints
+    from sovereign_evals.runner import run_suite
+
+    endpoints = Endpoints()
+    if args.runtime_url:
+        endpoints.runtime_base_url = args.runtime_url
+    if args.gateway_url:
+        endpoints.gateway_base_url = args.gateway_url
+    if args.prometheus_url:
+        endpoints.prometheus_base_url = args.prometheus_url
+    if args.pgvector_dsn:
+        endpoints.pgvector_dsn = args.pgvector_dsn
+    if args.runtime_api_key:
+        endpoints.runtime_api_key = args.runtime_api_key
+    if args.gateway_api_key:
+        endpoints.gateway_api_key = args.gateway_api_key
+    return run_suite(args.suite, endpoints=endpoints, report_dir=args.report_dir)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,6 +83,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_suite = sub.add_parser("suite", help="run an evaluation suite")
     p_suite.add_argument("suite", help="suite name or path")
+    p_suite.add_argument("--report-dir", default="reports")
+    p_suite.add_argument("--runtime-url", default=None)
+    p_suite.add_argument("--gateway-url", default=None)
+    p_suite.add_argument("--prometheus-url", default=None)
+    p_suite.add_argument("--pgvector-dsn", default=None)
+    p_suite.add_argument("--runtime-api-key", default=None)
+    p_suite.add_argument("--gateway-api-key", default=None)
     p_suite.set_defaults(fn=_cmd_suite)
 
     args = parser.parse_args(argv)

@@ -2,6 +2,45 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/eval-suite.schema.json",
   "title": "Sovereign Evaluation Suite",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "description": "Suite definitions executed by sovereign-evals (design.md §19). Each check names a registered check type; params are type-specific.",
+  "type": "object",
+  "required": ["name", "description", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "runtime-liveness",
+              "runtime-readiness",
+              "runtime-roles-loaded",
+              "runtime-manifest-valid",
+              "chat-completion",
+              "chat-streaming",
+              "text-embedding",
+              "image-embedding",
+              "audio-embedding",
+              "gateway-models",
+              "pgvector-roundtrip",
+              "metrics-available"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "Optional stable identifier; defaults to type (+ index on collision)."
+          },
+          "params": { "type": "object" }
+        }
+      }
+    }
+  }
 }
