@@ -1,0 +1,10 @@
+# Runtime overlay: contract-faithful mock (GPU-less dev and CI only).
+# Never ship this profile to a customer.
+services:
+  sovereign-runtime:
+    image: sovereign-runtime-mock:dev
+    build:
+      context: ../../runtime/mock
+    environment:
+      SOVEREIGN_PROFILE: mock
+      MOCK_FAIL_MODE: ${MOCK_FAIL_MODE:-none}

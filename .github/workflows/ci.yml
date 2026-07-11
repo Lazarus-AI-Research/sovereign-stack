@@ -34,3 +34,26 @@ jobs:
       - uses: actions/checkout@v4
       - run: cp deploy/.env.example deploy/.env
       - run: docker compose --project-directory deploy -f deploy/compose/compose.yml config -q
+      - run: docker compose --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.mock.yml config -q
+
+  runtime-conformance-mock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e evals
+      - run: docker build -t sovereign-runtime-mock:dev runtime/mock
+      - name: run mock
+        run: |
+          docker run -d --rm --name mock -p 8000:8000 \
+            -v "$PWD/deploy/config/runtime.yaml:/runtime-config/runtime.yaml:ro" \
+            -e SOVEREIGN_RUNTIME_CONFIG=/runtime-config/runtime.yaml \
+            -e SOVEREIGN_RUNTIME_API_KEY=ci-key \
+            sovereign-runtime-mock:dev
+      - run: sovereign-evals conformance --base-url http://127.0.0.1:8000 --api-key ci-key --wait-ready 60
+      - name: healthcheck binary honors the image contract
+        run: docker exec mock sovereign-runtime-healthcheck --live
+      - if: always()
+        run: docker stop mock || true
