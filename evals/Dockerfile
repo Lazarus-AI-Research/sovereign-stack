@@ -7,6 +7,7 @@ COPY evals/pyproject.toml ./
 COPY evals/sovereign_evals ./sovereign_evals
 COPY evals/suites ./suites
 COPY schemas ./schemas
-ENV SOVEREIGN_SCHEMAS_DIR=/app/schemas
+ENV SOVEREIGN_SCHEMAS_DIR=/app/schemas \
+    SOVEREIGN_SUITES_DIR=/app/suites
 RUN pip install --no-cache-dir .
 ENTRYPOINT ["sovereign-evals"]

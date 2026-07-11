@@ -4,7 +4,8 @@ services:
   sovereign-runtime:
     image: sovereign-runtime-mock:dev
     build:
-      context: ../../runtime/mock
+      # Relative to the compose project directory (deploy/), not this file.
+      context: ../runtime/mock
     environment:
       SOVEREIGN_PROFILE: mock
       MOCK_FAIL_MODE: ${MOCK_FAIL_MODE:-none}
