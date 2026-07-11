@@ -6,9 +6,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/hardware"
@@ -34,6 +37,26 @@ type Server struct {
 	Proxy   *dockerproxy.Client
 	Gateway *gateway.Client
 	Version string
+	// Auth enables session authentication when non-nil. It is nil only
+	// before the database is reachable and in unit tests.
+	Auth *auth.Service
+}
+
+const sessionCookie = "sovereign_session"
+
+func sessionToken(r *http.Request) string {
+	if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+		return strings.TrimPrefix(header, "Bearer ")
+	}
+	if cookie, err := r.Cookie(sessionCookie); err == nil {
+		return cookie.Value
+	}
+	return ""
+}
+
+// open paths never require a session.
+func openPath(path string) bool {
+	return path == BasePath+"/health" || path == BasePath+"/auth/login"
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -49,6 +72,64 @@ func errorJSON(w http.ResponseWriter, status int, message string) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	p := func(path string) string { return BasePath + path }
+
+	// ── auth ─────────────────────────────────────────────────────────────
+
+	mux.HandleFunc("POST "+p("/auth/login"), func(w http.ResponseWriter, r *http.Request) {
+		if s.Auth == nil {
+			errorJSON(w, http.StatusServiceUnavailable, "authentication not ready")
+			return
+		}
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			errorJSON(w, http.StatusBadRequest, "username and password are required")
+			return
+		}
+		token, err := s.Auth.Login(r.Context(), body.Username, body.Password)
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			errorJSON(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		if err != nil {
+			errorJSON(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookie,
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(auth.SessionTTL.Seconds()),
+		})
+		writeJSON(w, http.StatusOK, map[string]string{"token": token})
+	})
+
+	mux.HandleFunc("POST "+p("/auth/logout"), func(w http.ResponseWriter, r *http.Request) {
+		if s.Auth != nil {
+			if token := sessionToken(r); token != "" {
+				s.Auth.Logout(r.Context(), token)
+			}
+		}
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
+	})
+
+	mux.HandleFunc("GET "+p("/auth/me"), func(w http.ResponseWriter, r *http.Request) {
+		if s.Auth == nil {
+			errorJSON(w, http.StatusServiceUnavailable, "authentication not ready")
+			return
+		}
+		username, err := s.Auth.Validate(r.Context(), sessionToken(r))
+		if err != nil {
+			errorJSON(w, http.StatusUnauthorized, "not authenticated")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"username": username})
+	})
 
 	// ── §18.1 system ─────────────────────────────────────────────────────
 
@@ -161,5 +242,15 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusAccepted, map[string]string{"restarting": "sovereign-runtime"})
 	})
 
-	return mux
+	// Session middleware: everything under the base path except open paths
+	// requires a valid session once Auth is wired.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.Auth != nil && strings.HasPrefix(r.URL.Path, BasePath) && !openPath(r.URL.Path) {
+			if _, err := s.Auth.Validate(r.Context(), sessionToken(r)); err != nil {
+				errorJSON(w, http.StatusUnauthorized, "not authenticated")
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
 }

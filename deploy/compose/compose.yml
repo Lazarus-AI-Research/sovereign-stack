@@ -30,6 +30,9 @@ services:
     image: ${SOVEREIGN_CONTROL_IMAGE}
     container_name: sovereign-control
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
     environment:
