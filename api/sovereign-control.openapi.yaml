@@ -1,5 +1,7 @@
-# Sovereign Control API (design.md §18). Scaffold — endpoints to be filled in
-# as they are implemented; §18 is the authoritative surface list.
+# Sovereign Control API (design.md §18). Covers the implemented surface;
+# §18 remains the authoritative endpoint list for groups not yet implemented
+# (models, embedding-profiles, indexes, gateway admin, workspace, evals,
+# backups, bundles).
 openapi: 3.1.0
 
 info:
@@ -7,7 +9,6 @@ info:
   version: 0.1.0
   description: >
     Customer-facing control plane for Lazarus Sovereign Stack.
-    Base path: /api/control/v1
 
 servers:
   - url: /api/control/v1
@@ -25,11 +26,158 @@ paths:
               schema:
                 type: object
                 properties:
-                  status:
-                    type: string
-                  version:
-                    type: string
+                  status: { type: string }
+                  version: { type: string }
 
-  # TODO (design.md §18): /status /version, hardware, runtime, runtime roles,
-  # models, embedding-profiles, indexes, gateway, workspace, evals, backups,
-  # bundles.
+  /version:
+    get:
+      summary: Control-plane version
+      operationId: getVersion
+      responses:
+        "200":
+          description: Version information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+
+  /status:
+    get:
+      summary: Aggregate product status (runtime, gateway, proxy, services)
+      operationId: getStatus
+      responses:
+        "200":
+          description: Aggregated status of all Sovereign services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  control: { type: object }
+                  runtime:
+                    type: object
+                    properties:
+                      reachable: { type: boolean }
+                      state: { type: string }
+                      ready: { type: boolean }
+                      required_roles:
+                        type: object
+                        additionalProperties: { type: boolean }
+                  gateway:
+                    type: object
+                    properties:
+                      healthy: { type: boolean }
+                  docker_proxy: { type: object }
+                  services:
+                    type: object
+                    additionalProperties: { type: string }
+
+  /hardware:
+    get:
+      summary: Current hardware detections
+      operationId: getHardware
+      responses:
+        "200":
+          $ref: "#/components/responses/Detections"
+
+  /hardware/detect:
+    post:
+      summary: Run hardware detection
+      operationId: detectHardware
+      responses:
+        "200":
+          $ref: "#/components/responses/Detections"
+
+  /profiles:
+    get:
+      summary: Known runtime profiles with recommendations
+      operationId: getProfiles
+      responses:
+        "200":
+          description: Profiles and whether detection recommends them
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        profile: { type: string }
+                        recommended: { type: boolean }
+
+  /runtime/status:
+    get:
+      summary: Runtime aggregate health (passthrough of GET /health)
+      operationId: getRuntimeStatus
+      responses:
+        "200":
+          description: Runtime health document (see docs/runtime-contract.md)
+          content:
+            application/json:
+              schema: { type: object }
+        "502": { $ref: "#/components/responses/Unreachable" }
+
+  /runtime/manifest:
+    get:
+      summary: Runtime manifest (validates against runtime-manifest.schema.json)
+      operationId: getRuntimeManifest
+      responses:
+        "200":
+          description: Runtime manifest
+          content:
+            application/json:
+              schema: { type: object }
+        "502": { $ref: "#/components/responses/Unreachable" }
+
+  /runtime/errors:
+    get:
+      summary: Runtime error records
+      operationId: getRuntimeErrors
+      responses:
+        "200":
+          description: Structured runtime errors
+          content:
+            application/json:
+              schema: { type: object }
+        "502": { $ref: "#/components/responses/Unreachable" }
+
+  /runtime/restart:
+    post:
+      summary: Restart the runtime via the restricted Docker proxy
+      operationId: restartRuntime
+      responses:
+        "202":
+          description: Restart accepted
+        "502": { $ref: "#/components/responses/Unreachable" }
+
+components:
+  responses:
+    Detections:
+      description: Profile detections, most preferred first
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detections:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    profile: { type: string }
+                    reasons:
+                      type: array
+                      items: { type: string }
+    Unreachable:
+      description: A dependent Sovereign service is unreachable
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
