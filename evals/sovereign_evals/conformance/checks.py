@@ -224,6 +224,10 @@ def check_completions(ctx: Context) -> CheckResult:
 @check("text-embedding", "POST /v1/embeddings matches manifest dims and norm", needs_ready=True)
 def check_embeddings(ctx: Context) -> CheckResult:
     role = ctx.role("embedding")
+    if not role.get("enabled"):
+        return CheckResult(
+            "text-embedding", "embeddings", passed=True, skipped=True, details="embedding role disabled"
+        )
     resp = ctx.client.post(
         "/v1/embeddings",
         json={"model": role.get("served_model_name"), "input": "sovereign stack"},
@@ -245,9 +249,9 @@ def check_embeddings(ctx: Context) -> CheckResult:
 
 @check("role-mismatch-404", "wrong-role model alias returns 404", needs_ready=True)
 def check_role_mismatch(ctx: Context) -> CheckResult:
-    embed_alias = ctx.role("embedding").get("served_model_name")
-    if not embed_alias:
-        return CheckResult("role-mismatch-404", "role mismatch", False, "no embedding alias in manifest")
+    # The embedding alias is the canonical wrong-role probe; fall back to a
+    # nonexistent alias for single-role runtimes — 404 required either way.
+    embed_alias = ctx.role("embedding").get("served_model_name") or "no-such-model"
     resp = ctx.client.post(
         "/v1/chat/completions",
         json={"model": embed_alias, "messages": [{"role": "user", "content": "hi"}]},
