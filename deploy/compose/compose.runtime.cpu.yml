@@ -1,7 +1,12 @@
-# Runtime overlay: CPU-only x86_64 (bring-up and diagnostics).
+# Runtime overlay: CPU-only (bring-up and diagnostics; amd64 + arm64).
+# Uses the cpu-profile runtime config (small models).
 services:
   sovereign-runtime:
     image: ghcr.io/lazarus-ai-research/sovereign-runtime:cpu-x86_64-${SOVEREIGN_VERSION}
+    volumes:
+      - ./config/runtime.cpu.yaml:/runtime-config/runtime.yaml:ro
+      - ./models:/models
+      - runtime_state:/runtime-state
     environment:
-      SOVEREIGN_PROFILE: cpu-x86_64
+      SOVEREIGN_PROFILE: ${SOVEREIGN_CPU_PROFILE:-cpu-x86_64}
       VLLM_BACKEND: cpu

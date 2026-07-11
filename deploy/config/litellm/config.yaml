@@ -16,6 +16,12 @@ model_list:
       api_base: http://sovereign-runtime:8000/v1
       api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
 
+  - model_name: embedding-text-compact
+    litellm_params:
+      model: openai/embedding-text-compact
+      api_base: http://sovereign-runtime:8000/v1
+      api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 
