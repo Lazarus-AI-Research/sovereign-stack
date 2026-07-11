@@ -26,8 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e 'evals[dev]'
-      # TODO: switch to pytest once evals/tests has real tests
-      - run: python -c "import sovereign_evals"
+      - run: pytest evals/tests
 
   compose:
     runs-on: ubuntu-latest

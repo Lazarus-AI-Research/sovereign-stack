@@ -1,0 +1,13 @@
+{
+  "status": "degraded",
+  "state": "degraded",
+  "roles": {
+    "generation": {
+      "status": "healthy"
+    },
+    "embedding": {
+      "status": "unhealthy",
+      "error_code": "MODEL_LOAD_FAILED"
+    }
+  }
+}

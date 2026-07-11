@@ -1,0 +1,8 @@
+{
+  "ready": false,
+  "state": "configuration_error",
+  "required_roles": {
+    "generation": false,
+    "embedding": false
+  }
+}

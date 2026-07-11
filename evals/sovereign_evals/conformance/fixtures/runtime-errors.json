@@ -1,0 +1,11 @@
+{
+  "errors": [
+    {
+      "code": "MODEL_REVISION_NOT_FOUND",
+      "role": "embedding",
+      "message": "Configured model revision could not be resolved.",
+      "recoverable": true,
+      "first_seen": "2026-07-11T12:00:00Z"
+    }
+  ]
+}

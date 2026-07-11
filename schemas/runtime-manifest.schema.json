@@ -2,6 +2,149 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/runtime-manifest.schema.json",
   "title": "Sovereign Runtime Manifest",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "description": "Schema for GET /runtime/manifest and $SOVEREIGN_RUNTIME_MANIFEST (design.md §14). The manifest reports observed reality: dimensions are discovered from the loaded checkpoint, never inferred (§10.1); backend/accelerator report actual execution (a Metal-profile image running CPU inference must say so).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "runtime_id",
+    "runtime_version",
+    "backend",
+    "profile",
+    "topology",
+    "state",
+    "api",
+    "roles"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.1" },
+    "runtime_id": { "type": "string", "minLength": 1 },
+    "runtime_version": { "type": "string", "minLength": 1 },
+    "vllm_version": { "type": "string" },
+    "backend": {
+      "type": "string",
+      "enum": ["cuda", "rocm", "xpu", "metal", "cpu", "mock"]
+    },
+    "profile": {
+      "type": "string",
+      "enum": [
+        "cuda-x86_64",
+        "cuda-arm64-dgx-spark",
+        "rocm-x86_64",
+        "rocm-strix-halo",
+        "xpu-x86_64",
+        "metal-arm64",
+        "cpu-x86_64",
+        "cpu-arm64",
+        "mock"
+      ]
+    },
+    "topology": { "type": "string", "const": "single_process_multi_role" },
+    "state": { "$ref": "#/$defs/state" },
+    "api": {
+      "type": "object",
+      "required": ["openai_compatible", "port", "base_path"],
+      "properties": {
+        "openai_compatible": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "base_path": { "type": "string", "pattern": "^/" }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "required": ["generation", "embedding"],
+      "properties": {
+        "generation": { "$ref": "#/$defs/role" },
+        "embedding": {
+          "allOf": [
+            { "$ref": "#/$defs/role" },
+            {
+              "properties": {
+                "dimensions": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Discovered from the loaded checkpoint via probe (§10.1)."
+                },
+                "pooling": { "type": "string", "enum": ["last", "mean", "cls"] },
+                "normalization": { "type": "string", "enum": ["l2", "none"] },
+                "modalities": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["text", "image", "audio", "video"] },
+                  "minItems": 1
+                }
+              }
+            }
+          ]
+        },
+        "vision": { "$ref": "#/$defs/role" },
+        "audio": { "$ref": "#/$defs/role" },
+        "rerank": { "$ref": "#/$defs/role" }
+      }
+    },
+    "resource_policy": {
+      "type": "object",
+      "properties": {
+        "enforcement": {
+          "type": "string",
+          "const": "best_effort",
+          "description": "Memory allocation is advisory (§3.5)."
+        },
+        "generation_memory_weight": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "embedding_memory_weight": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "accelerator": {
+      "type": "object",
+      "properties": {
+        "vendor": {
+          "type": "string",
+          "enum": ["nvidia", "amd", "apple", "intel", "cpu", "none"]
+        },
+        "device_count": { "type": "integer", "minimum": 0 },
+        "unified_memory": { "type": "boolean" }
+      }
+    },
+    "health": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" },
+        "driver": { "type": "string" },
+        "kernels": { "type": "string" },
+        "metrics": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "state": {
+      "type": "string",
+      "description": "Runtime state machine (design.md §3.2).",
+      "enum": [
+        "initializing",
+        "downloading",
+        "compiling",
+        "loading",
+        "smoke_testing",
+        "healthy",
+        "degraded",
+        "configuration_error",
+        "runtime_error"
+      ]
+    },
+    "role": {
+      "type": "object",
+      "required": ["enabled", "status"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["healthy", "unhealthy", "loading", "disabled"]
+        },
+        "task": { "type": "string", "enum": ["generate", "embed", "rerank"] },
+        "served_model_name": { "type": "string", "minLength": 1 },
+        "engine_model": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string" },
+        "context_length": { "type": "integer", "minimum": 1 },
+        "error_code": { "type": "string" }
+      }
+    }
+  }
 }

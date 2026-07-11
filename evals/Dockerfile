@@ -6,5 +6,7 @@ WORKDIR /app
 COPY evals/pyproject.toml ./
 COPY evals/sovereign_evals ./sovereign_evals
 COPY evals/suites ./suites
+COPY schemas ./schemas
+ENV SOVEREIGN_SCHEMAS_DIR=/app/schemas
 RUN pip install --no-cache-dir .
 ENTRYPOINT ["sovereign-evals"]

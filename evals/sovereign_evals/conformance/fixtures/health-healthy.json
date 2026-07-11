@@ -1,0 +1,18 @@
+{
+  "status": "healthy",
+  "state": "healthy",
+  "runtime_id": "sovereign-runtime-cuda-x86_64-2026.07.0",
+  "roles": {
+    "generation": {
+      "status": "healthy",
+      "model_loaded": true,
+      "served_model_name": "assistant-large"
+    },
+    "embedding": {
+      "status": "healthy",
+      "model_loaded": true,
+      "served_model_name": "embedding-omni-default",
+      "modalities": ["text", "image", "audio"]
+    }
+  }
+}
