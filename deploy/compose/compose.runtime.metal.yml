@@ -3,7 +3,7 @@
 # image and contract (design.md §2.6).
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
     environment:
       SOVEREIGN_PROFILE: metal-arm64
       VLLM_BACKEND: metal

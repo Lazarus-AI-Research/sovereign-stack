@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 VERSION := $(shell cat VERSION)
-REGISTRY := docker.io/lazarus-ai-research
+REGISTRY := ghcr.io/lazarus-ai-research
 
 .PHONY: help build test test-go test-evals images compose-validate clean
 

@@ -4,7 +4,7 @@
 allowed_project: sovereign-stack
 
 allowed_image_prefixes:
-  - docker.io/lazarus-ai-research/
+  - ghcr.io/lazarus-ai-research/
 
 allowed_services:
   - sovereign-runtime

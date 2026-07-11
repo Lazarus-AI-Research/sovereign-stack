@@ -1,7 +1,7 @@
 # Runtime overlay: NVIDIA DGX Spark (CUDA arm64, unified memory).
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:cuda-arm64-dgx-spark-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-arm64-dgx-spark-${SOVEREIGN_VERSION}
     gpus: all
     ipc: host
     environment:

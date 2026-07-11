@@ -1,7 +1,7 @@
 # Runtime overlay: Intel XPU x86_64 (design.md §8.2).
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-${SOVEREIGN_VERSION}
     devices:
       - /dev/dri
     group_add:

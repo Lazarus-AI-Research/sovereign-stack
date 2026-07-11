@@ -9,7 +9,7 @@
 **Supersedes:** Version 0.5 and all prior addenda
 **Primary deployment:** Docker Compose
 **Source hosting:** GitHub
-**Image registry:** Docker Hub
+**Image registry:** GitHub Container Registry (GHCR)
 **Control plane implementation:** Go
 **Primary inference runtime:** Lazarus fork of vLLM
 **Default omni embedding model:** `LCO-Embedding/LCO-Embedding-Omni-3B-2605`
@@ -229,7 +229,7 @@ The Mac runtime is distributed and operated through Docker using the same produc
 Runtime image:
 
 ```text
-docker.io/lazarus-ai-research/sovereign-runtime:metal-arm64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-<version>
 ```
 
 Platform-specific Docker Desktop or host-integration behavior may exist internally, but must remain encapsulated behind the Sovereign Runtime container and contract.
@@ -344,7 +344,7 @@ Runtime image names must be single-line YAML strings.
 Correct:
 
 ```yaml
-image: docker.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-${SOVEREIGN_VERSION}
+image: ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-${SOVEREIGN_VERSION}
 ```
 
 Do not use folded scalar syntax for image names.
@@ -353,7 +353,7 @@ Incorrect:
 
 ```yaml
 image: >
-  docker.io/lazarus-ai-research/sovereign-runtime:
+  ghcr.io/lazarus-ai-research/sovereign-runtime:
   cuda-x86_64-${SOVEREIGN_VERSION}
 ```
 
@@ -921,7 +921,7 @@ sovereign-control/
 Published image:
 
 ```text
-docker.io/lazarus-ai-research/sovereign-control:<version>
+ghcr.io/lazarus-ai-research/sovereign-control:<version>
 ```
 
 ---
@@ -1032,7 +1032,7 @@ sovereign-evals/
 Published image:
 
 ```text
-docker.io/lazarus-ai-research/sovereign-evals:<version>
+ghcr.io/lazarus-ai-research/sovereign-evals:<version>
 ```
 
 ---
@@ -1058,38 +1058,38 @@ sovereign-docker-proxy/
 Published image:
 
 ```text
-docker.io/lazarus-ai-research/sovereign-docker-proxy:<version>
+ghcr.io/lazarus-ai-research/sovereign-docker-proxy:<version>
 ```
 
 ---
 
 # 7. Docker Images
 
-Canonical Docker Hub namespace:
+Canonical image namespace:
 
 ```text
-lazarus-ai-research
+ghcr.io/lazarus-ai-research
 ```
 
 Runtime images:
 
 ```text
-lazarus-ai-research/sovereign-runtime:cuda-x86_64-<version>
-lazarus-ai-research/sovereign-runtime:cuda-arm64-dgx-spark-<version>
-lazarus-ai-research/sovereign-runtime:rocm-x86_64-<version>
-lazarus-ai-research/sovereign-runtime:rocm-strix-halo-<version>
-lazarus-ai-research/sovereign-runtime:xpu-x86_64-<version>
-lazarus-ai-research/sovereign-runtime:metal-arm64-<version>
-lazarus-ai-research/sovereign-runtime:cpu-x86_64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-arm64-dgx-spark-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:rocm-x86_64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:rocm-strix-halo-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:cpu-x86_64-<version>
 ```
 
 Application images:
 
 ```text
-lazarus-ai-research/sovereign-control:<version>
-lazarus-ai-research/sovereign-evals:<version>
-lazarus-ai-research/sovereign-backup:<version>
-lazarus-ai-research/sovereign-docker-proxy:<version>
+ghcr.io/lazarus-ai-research/sovereign-control:<version>
+ghcr.io/lazarus-ai-research/sovereign-evals:<version>
+ghcr.io/lazarus-ai-research/sovereign-backup:<version>
+ghcr.io/lazarus-ai-research/sovereign-docker-proxy:<version>
 ```
 
 Production deployments must use immutable version tags.
@@ -1150,7 +1150,7 @@ services:
     restart: unless-stopped
     environment:
       ALLOWED_PROJECT: sovereign-stack
-      ALLOWED_IMAGE_PREFIX: docker.io/lazarus-ai-research/
+      ALLOWED_IMAGE_PREFIX: ghcr.io/lazarus-ai-research/
       AUDIT_LOG_PATH: /audit/docker-actions.jsonl
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -1350,7 +1350,7 @@ CUDA:
 ```yaml
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-${SOVEREIGN_VERSION}
     gpus: all
     ipc: host
     environment:
@@ -1364,7 +1364,7 @@ ROCm:
 ```yaml
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:rocm-x86_64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:rocm-x86_64-${SOVEREIGN_VERSION}
     devices:
       - /dev/kfd
       - /dev/dri
@@ -1383,7 +1383,7 @@ Intel XPU:
 ```yaml
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-${SOVEREIGN_VERSION}
     devices:
       - /dev/dri
     group_add:
@@ -1401,7 +1401,7 @@ Apple Metal:
 ```yaml
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
     environment:
       SOVEREIGN_PROFILE: metal-arm64
       VLLM_BACKEND: metal
@@ -2748,7 +2748,7 @@ Required product capabilities:
 
 24. Docker Compose is the appliance deployment unit.
 
-25. Docker Hub is the image distribution channel.
+25. GitHub Container Registry (GHCR) is the image distribution channel.
 
 26. GitHub is the source and release metadata channel.
 

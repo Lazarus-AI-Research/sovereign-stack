@@ -54,7 +54,7 @@ services:
     restart: unless-stopped
     environment:
       ALLOWED_PROJECT: sovereign-stack
-      ALLOWED_IMAGE_PREFIX: docker.io/lazarus-ai-research/
+      ALLOWED_IMAGE_PREFIX: ghcr.io/lazarus-ai-research/
       AUDIT_LOG_PATH: /audit/docker-actions.jsonl
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

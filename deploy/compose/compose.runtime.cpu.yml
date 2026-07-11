@@ -1,7 +1,7 @@
 # Runtime overlay: CPU-only x86_64 (bring-up and diagnostics).
 services:
   sovereign-runtime:
-    image: docker.io/lazarus-ai-research/sovereign-runtime:cpu-x86_64-${SOVEREIGN_VERSION}
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:cpu-x86_64-${SOVEREIGN_VERSION}
     environment:
       SOVEREIGN_PROFILE: cpu-x86_64
       VLLM_BACKEND: cpu
