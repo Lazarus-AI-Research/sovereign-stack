@@ -53,11 +53,13 @@ services:
     container_name: sovereign-docker-proxy
     restart: unless-stopped
     environment:
-      ALLOWED_PROJECT: sovereign-stack
-      ALLOWED_IMAGE_PREFIX: ghcr.io/lazarus-ai-research/
+      DOCKER_PROXY_TOKEN: ${DOCKER_PROXY_TOKEN}
+      ALLOWLIST_PATH: /etc/sovereign/allowlist.yaml
       AUDIT_LOG_PATH: /audit/docker-actions.jsonl
+      SOVEREIGN_VERSION: ${SOVEREIGN_VERSION}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/docker-proxy:/etc/sovereign:ro
       - ./logs/docker-proxy:/audit
     expose:
       - "8081"

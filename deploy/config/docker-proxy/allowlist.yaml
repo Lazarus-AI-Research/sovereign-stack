@@ -19,3 +19,17 @@ allowed_operations:
   - pull
   - logs
   - run-evals
+
+# The only container the proxy may create. Nothing here is caller-controlled
+# except the suite name; env values come from the proxy's own environment.
+evals:
+  image_prefix: ghcr.io/lazarus-ai-research/sovereign-evals
+  network: sovereign
+  binds: []
+  env_keys:
+    - RUNTIME_BASE_URL
+    - LITELLM_BASE_URL
+    - PROMETHEUS_BASE_URL
+    - SOVEREIGN_RUNTIME_API_KEY
+    - LITELLM_MASTER_KEY
+    - PGVECTOR_CONNECTION_STRING
