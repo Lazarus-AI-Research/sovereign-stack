@@ -40,6 +40,8 @@ type Server struct {
 	// Auth enables session authentication when non-nil. It is nil only
 	// before the database is reachable and in unit tests.
 	Auth *auth.Service
+	// UI serves the embedded web frontend at /. Optional.
+	UI http.Handler
 }
 
 const sessionCookie = "sovereign_session"
@@ -241,6 +243,10 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"restarting": "sovereign-runtime"})
 	})
+
+	if s.UI != nil {
+		mux.Handle("GET /", s.UI)
+	}
 
 	// Session middleware: everything under the base path except open paths
 	// requires a valid session once Auth is wired.

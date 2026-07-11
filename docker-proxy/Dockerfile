@@ -11,7 +11,10 @@ RUN cd docker-proxy && CGO_ENABLED=0 go build \
       -ldflags "-X main.version=${VERSION}" \
       -o /out/sovereign-docker-proxy ./cmd/sovereign-docker-proxy
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# Root variant: the proxy's entire purpose is mediated access to the Docker
+# socket, which is root-owned inside the VM. The allowlist + audit layer is
+# the security boundary; the image stays distroless.
+FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/sovereign-docker-proxy /usr/local/bin/sovereign-docker-proxy
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/sovereign-docker-proxy"]

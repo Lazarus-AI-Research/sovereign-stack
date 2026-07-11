@@ -2,8 +2,13 @@
 # Build context: repository root — docker build -f control/Dockerfile .
 # Schemas are copied from the repo-root single source of truth.
 
-# TODO: add a node build stage for control/web once the frontend exists,
-# and embed its dist/ output in the binary.
+FROM node:22-alpine AS web
+WORKDIR /src/web
+COPY control/web/package.json control/web/package-lock.json ./
+RUN npm ci --no-fund --no-audit
+COPY control/web/ ./
+# vite outDir ../internal/web/dist → /src/internal/web/dist
+RUN npm run build
 
 FROM golang:1.25 AS build
 WORKDIR /src
@@ -11,6 +16,7 @@ COPY go.work go.work
 COPY control/ control/
 COPY docker-proxy/ docker-proxy/
 COPY schemas/ schemas/
+COPY --from=web /src/internal/web/dist control/internal/web/dist
 ARG VERSION=dev
 RUN cd control && CGO_ENABLED=0 go build \
       -ldflags "-X main.version=${VERSION}" \

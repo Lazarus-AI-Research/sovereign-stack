@@ -7,8 +7,9 @@ bin/
 *.test
 
 # Web frontend
-node_modules/
-control/web/dist/
+control/internal/web/dist/*
+!control/internal/web/dist/index.html
+control/web/node_modules/
 
 # Python
 __pycache__/

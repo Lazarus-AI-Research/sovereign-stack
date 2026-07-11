@@ -3,6 +3,7 @@
 
 :80 {
 	# Sovereign Control admin UI and API
+	redir /control /control/
 	handle /control/* {
 		uri strip_prefix /control
 		reverse_proxy sovereign-control:8080

@@ -16,6 +16,7 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/web"
 )
 
 var version = "dev" // set via -ldflags at release build
@@ -34,6 +35,7 @@ func main() {
 			os.Getenv("LITELLM_MASTER_KEY"),
 		),
 		Version: version,
+		UI:      web.Handler(),
 	}
 
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
