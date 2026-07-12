@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+import sovereign_evals.benchmark  # noqa: F401 — registers benchmark check types
 from sovereign_evals.endpoints import Endpoints
 from sovereign_evals.schemas import validation_errors
 from sovereign_evals.smoke.checks import REGISTRY, SKIPPED, SuiteContext
@@ -85,23 +86,29 @@ def run_suite(
             check_id = f"{check_id}-{index}"
         seen_ids.add(check_id)
         started = time.monotonic()
+        metrics = None
         try:
-            passed, details = REGISTRY[check_type](ctx, check.get("params") or {})
+            outcome = REGISTRY[check_type](ctx, check.get("params") or {})
+            if len(outcome) == 3:
+                passed, details, metrics = outcome
+            else:
+                passed, details = outcome
         except Exception as exc:
             passed, details = False, f"{type(exc).__name__}: {exc}"
         skipped = details.startswith(SKIPPED)
         if skipped:
             details = details[len(SKIPPED) :]
-        results.append(
-            {
-                "id": check_id,
-                "type": check_type,
-                "passed": passed,
-                "skipped": skipped,
-                "details": details,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-            }
-        )
+        record = {
+            "id": check_id,
+            "type": check_type,
+            "passed": passed,
+            "skipped": skipped,
+            "details": details,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        }
+        if metrics is not None:
+            record["metrics"] = metrics
+        results.append(record)
 
     width = max(len(r["id"]) for r in results)
     for r in results:

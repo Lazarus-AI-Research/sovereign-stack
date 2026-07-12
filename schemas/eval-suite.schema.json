@@ -31,7 +31,10 @@
               "audio-embedding",
               "gateway-models",
               "pgvector-roundtrip",
-              "metrics-available"
+              "metrics-available",
+              "benchmark-generation",
+              "benchmark-embedding",
+              "benchmark-mixed"
             ]
           },
           "id": {

@@ -1,4 +1,17 @@
+# Quick benchmark suite (design.md §19.2).
 # Validated against schemas/eval-suite.schema.json.
+
 name: quick
-description: Quick benchmark: latency, throughput, basic concurrency
-checks: []  # TODO (design.md §19)
+description: "Quick benchmark: latency, throughput, basic concurrency (§19.2)"
+
+checks:
+  - type: runtime-readiness
+  - type: benchmark-generation
+    id: generation-short
+    params: { target: gateway, requests: 8, concurrency: 2, max_tokens: 64 }
+  - type: benchmark-embedding
+    id: embedding-throughput
+    params: { target: gateway, batch_size: 16, batches: 5 }
+  - type: benchmark-mixed
+    id: mixed-pressure
+    params: { target: gateway, generation_requests: 4, embedding_batches: 4 }
