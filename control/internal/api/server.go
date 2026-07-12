@@ -15,6 +15,8 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/hardware"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
 )
 
@@ -42,6 +44,9 @@ type Server struct {
 	Auth *auth.Service
 	// UI serves the embedded web frontend at /. Optional.
 	UI http.Handler
+	// Models and Jobs enable §18.5 endpoints when non-nil.
+	Models *models.Registry
+	Jobs   *jobs.Runner
 }
 
 const sessionCookie = "sovereign_session"
@@ -243,6 +248,113 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"restarting": "sovereign-runtime"})
 	})
+
+	// ── §18.5 models ─────────────────────────────────────────────────────
+
+	if s.Models != nil {
+		mux.HandleFunc("GET "+p("/models"), func(w http.ResponseWriter, r *http.Request) {
+			entries, err := s.Models.List()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			// annotate with what the runtime actually has loaded
+			loaded := map[string]string{}
+			if manifest, err := s.Runtime.Manifest(r.Context()); err == nil {
+				if roles, ok := manifest["roles"].(map[string]any); ok {
+					for roleName, roleValue := range roles {
+						if role, ok := roleValue.(map[string]any); ok {
+							if engineModel, ok := role["engine_model"].(string); ok {
+								loaded[roleName] = engineModel
+							}
+						}
+					}
+				}
+			}
+			out := make([]map[string]any, 0, len(entries))
+			for _, entry := range entries {
+				out = append(out, map[string]any{
+					"id":       entry.ID,
+					"role":     entry.Role,
+					"source":   entry.Source,
+					"model":    entry.Model,
+					"revision": entry.Revision,
+					"loaded":   loaded[entry.Role] == entry.Model,
+				})
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"models": out})
+		})
+
+		addModel := func(w http.ResponseWriter, r *http.Request) {
+			var entry models.Entry
+			if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid model entry")
+				return
+			}
+			if err := s.Models.Add(entry); err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, entry)
+		}
+		mux.HandleFunc("POST "+p("/models/local"), addModel)
+		mux.HandleFunc("POST "+p("/models/remote"), addModel)
+
+		mux.HandleFunc("PATCH "+p("/models/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			var patch map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid patch")
+				return
+			}
+			entry, err := s.Models.Update(r.PathValue("id"), patch)
+			if err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, entry)
+		})
+
+		mux.HandleFunc("DELETE "+p("/models/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Models.Delete(r.PathValue("id")); err != nil {
+				errorJSON(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"deleted": r.PathValue("id")})
+		})
+
+		if s.Jobs != nil {
+			mux.HandleFunc("POST "+p("/models/{id}/load"), func(w http.ResponseWriter, r *http.Request) {
+				modelID := r.PathValue("id")
+				if _, err := s.Models.Get(modelID); err != nil {
+					errorJSON(w, http.StatusNotFound, err.Error())
+					return
+				}
+				// §2.9: warn, never block.
+				jobID, err := s.Jobs.Enqueue(r.Context(), "model-load", models.LoadPayload{ModelID: modelID})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{
+					"job_id":  jobID,
+					"warning": "This model has not been validated on the selected runtime profile. Loading may fail, consume excessive memory, or perform poorly. Run a smoke test after loading.",
+				})
+			})
+		}
+	}
+
+	// ── jobs ─────────────────────────────────────────────────────────────
+
+	if s.Jobs != nil {
+		mux.HandleFunc("GET "+p("/jobs/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			job, err := s.Jobs.Get(r.Context(), r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "job not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, job)
+		})
+	}
 
 	if s.UI != nil {
 		mux.Handle("GET /", s.UI)

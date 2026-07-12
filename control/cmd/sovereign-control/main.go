@@ -15,6 +15,7 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/web"
 )
@@ -38,6 +39,10 @@ func main() {
 		UI:      web.Handler(),
 	}
 
+	sovereignRoot := cmp.Or(os.Getenv("SOVEREIGN_ROOT"), "/sovereign")
+	registry := models.NewRegistry(sovereignRoot + "/config/model-registry.yaml")
+	server.Models = registry
+
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
 		pool := connectWithRetry(databaseURL)
 		authService := auth.New(pool)
@@ -48,8 +53,14 @@ func main() {
 		server.Auth = authService
 
 		runner := jobs.New(pool)
-		// Job handlers register here as milestones land (model loads,
-		// index rebuilds, backups, eval runs).
+		loader := models.LoadDeps{
+			Registry:   registry,
+			ConfigPath: cmp.Or(os.Getenv("RUNTIME_CONFIG_PATH"), sovereignRoot+"/config/runtime.yaml"),
+			Proxy:      server.Proxy,
+			Runtime:    server.Runtime,
+		}
+		runner.Register("model-load", loader.HandleLoad)
+		server.Jobs = runner
 		go runner.Run(ctx)
 	} else {
 		log.Print("warning: DATABASE_URL not set — authentication disabled, state is ephemeral")
