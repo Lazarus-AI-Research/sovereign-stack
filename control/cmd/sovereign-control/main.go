@@ -4,6 +4,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -42,6 +43,7 @@ func main() {
 	sovereignRoot := cmp.Or(os.Getenv("SOVEREIGN_ROOT"), "/sovereign")
 	registry := models.NewRegistry(sovereignRoot + "/config/model-registry.yaml")
 	server.Models = registry
+	server.Reports = sovereignRoot + "/reports"
 
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
 		pool := connectWithRetry(databaseURL)
@@ -60,6 +62,20 @@ func main() {
 			Runtime:    server.Runtime,
 		}
 		runner.Register("model-load", loader.HandleLoad)
+		evalsImage := cmp.Or(os.Getenv("SOVEREIGN_EVALS_IMAGE"), "ghcr.io/lazarus-ai-research/sovereign-evals:latest")
+		runner.Register("evals-run", func(ctx context.Context, payload json.RawMessage) (any, error) {
+			var body struct {
+				Suite string `json:"suite"`
+			}
+			if err := json.Unmarshal(payload, &body); err != nil {
+				return nil, err
+			}
+			containerID, err := server.Proxy.RunEvals(ctx, evalsImage, body.Suite)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{"container_id": containerID, "suite": body.Suite}, nil
+		})
 		server.Jobs = runner
 		go runner.Run(ctx)
 	} else {

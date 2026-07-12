@@ -55,11 +55,14 @@ services:
     image: ${SOVEREIGN_DOCKER_PROXY_IMAGE}
     container_name: sovereign-docker-proxy
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       DOCKER_PROXY_TOKEN: ${DOCKER_PROXY_TOKEN}
       ALLOWLIST_PATH: /etc/sovereign/allowlist.yaml
       AUDIT_LOG_PATH: /audit/docker-actions.jsonl
       SOVEREIGN_VERSION: ${SOVEREIGN_VERSION}
+      DEPLOY_ROOT: ${DEPLOY_ROOT}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config/docker-proxy:/etc/sovereign:ro

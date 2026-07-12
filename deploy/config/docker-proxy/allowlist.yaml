@@ -25,7 +25,9 @@ allowed_operations:
 evals:
   image_prefix: ghcr.io/lazarus-ai-research/sovereign-evals
   network: sovereign
-  binds: []
+  # ${DEPLOY_ROOT} expands from the proxy's environment (install-specific).
+  binds:
+    - ${DEPLOY_ROOT}/reports:/sovereign/reports
   env_keys:
     - RUNTIME_BASE_URL
     - LITELLM_BASE_URL

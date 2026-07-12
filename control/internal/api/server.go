@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +50,8 @@ type Server struct {
 	// Models and Jobs enable §18.5 endpoints when non-nil.
 	Models *models.Registry
 	Jobs   *jobs.Runner
+	// Reports is the evals report directory (§18.10); empty disables.
+	Reports string
 }
 
 const sessionCookie = "sovereign_session"
@@ -353,6 +358,58 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, job)
+		})
+	}
+
+	// ── §18.10 evaluations ───────────────────────────────────────────────
+
+	if s.Jobs != nil {
+		runSuite := func(suite string) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				jobID, err := s.Jobs.Enqueue(r.Context(), "evals-run", map[string]string{"suite": suite})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID, "suite": suite})
+			}
+		}
+		mux.HandleFunc("POST "+p("/evals/smoke"), runSuite("smoke"))
+		mux.HandleFunc("POST "+p("/evals/benchmark/quick"), runSuite("quick"))
+		mux.HandleFunc("POST "+p("/evals/benchmark/full"), runSuite("full"))
+		mux.HandleFunc("POST "+p("/evals/retrieval"), runSuite("retrieval"))
+	}
+
+	if s.Reports != "" {
+		mux.HandleFunc("GET "+p("/evals/results"), func(w http.ResponseWriter, r *http.Request) {
+			entries, err := os.ReadDir(s.Reports)
+			if err != nil {
+				writeJSON(w, http.StatusOK, map[string]any{"results": []string{}})
+				return
+			}
+			var names []string
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), ".json") {
+					names = append(names, strings.TrimSuffix(entry.Name(), ".json"))
+				}
+			}
+			sort.Sort(sort.Reverse(sort.StringSlice(names)))
+			writeJSON(w, http.StatusOK, map[string]any{"results": names})
+		})
+
+		mux.HandleFunc("GET "+p("/evals/results/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			id := r.PathValue("id")
+			if strings.ContainsAny(id, "/\\.") {
+				errorJSON(w, http.StatusBadRequest, "invalid result id")
+				return
+			}
+			raw, err := os.ReadFile(filepath.Join(s.Reports, id+".json"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "result not found")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(raw)
 		})
 	}
 

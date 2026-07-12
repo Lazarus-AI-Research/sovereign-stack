@@ -201,13 +201,19 @@ func (s *Server) Handler() http.Handler {
 				env = append(env, key+"="+value)
 			}
 		}
+		// Binds come from configuration only; ${VAR} placeholders (e.g. the
+		// install-specific deploy root) expand from the proxy's environment.
+		binds := make([]string, 0, len(s.Allowlist.Evals.Binds))
+		for _, bind := range s.Allowlist.Evals.Binds {
+			binds = append(binds, os.ExpandEnv(bind))
+		}
 		id, err := s.Docker.RunJob(
 			r.Context(),
 			body.Image,
 			s.Allowlist.Evals.Network,
-			s.Allowlist.Evals.Binds,
+			binds,
 			env,
-			[]string{"suite", body.Suite},
+			[]string{"suite", body.Suite, "--report-dir", "/sovereign/reports"},
 		)
 		if err != nil {
 			errorJSON(w, http.StatusBadGateway, err.Error())
