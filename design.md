@@ -1712,7 +1712,7 @@ roles:
     enabled: true
     task: generate
     source: huggingface
-    model: Qwen/Qwen3-32B-AWQ
+    model: google/gemma-4-E2B-it
     revision: "<immutable-revision>"
     served_model_name: assistant-large
     max_model_len: 32768
@@ -1889,7 +1889,7 @@ Example:
       "status": "healthy",
       "task": "generate",
       "served_model_name": "assistant-large",
-      "engine_model": "Qwen/Qwen3-32B-AWQ",
+      "engine_model": "google/gemma-4-E2B-it",
       "revision": "immutable-revision",
       "context_length": 32768
     },

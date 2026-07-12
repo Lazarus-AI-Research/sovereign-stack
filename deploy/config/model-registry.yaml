@@ -6,7 +6,7 @@ models:
   - id: assistant-large
     role: generation
     source: huggingface
-    model: Qwen/Qwen3-32B-AWQ
+    model: google/gemma-4-E2B-it
     revision: "<immutable-revision>"
 
   - id: embedding-omni-default

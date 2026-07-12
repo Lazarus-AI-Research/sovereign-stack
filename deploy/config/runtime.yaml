@@ -20,7 +20,7 @@ roles:
     enabled: true
     task: generate
     source: huggingface
-    model: Qwen/Qwen3-32B-AWQ
+    model: google/gemma-4-E2B-it
     revision: "<immutable-revision>"
     served_model_name: assistant-large
     max_model_len: 32768
