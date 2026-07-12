@@ -14,7 +14,9 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/database"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/indexes"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
@@ -44,6 +46,27 @@ func main() {
 	registry := models.NewRegistry(sovereignRoot + "/config/model-registry.yaml")
 	server.Models = registry
 	server.Reports = sovereignRoot + "/reports"
+	profiles := embeddings.NewRegistry(sovereignRoot + "/config/embedding-profiles.yaml")
+	server.Profiles = profiles
+
+	if vectorsURL := os.Getenv("PGVECTOR_CONNECTION_STRING"); vectorsURL != "" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			pool, err := database.Connect(ctx, vectorsURL)
+			if err != nil {
+				log.Printf("warning: vectors database unavailable, index management disabled: %v", err)
+				return
+			}
+			store := indexes.New(pool)
+			if err := store.EnsureSchema(context.Background()); err != nil {
+				log.Printf("warning: vectors schema setup failed: %v", err)
+				return
+			}
+			server.Indexes = store
+			log.Print("index management ready (vectors database)")
+		}()
+	}
 
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
 		pool := connectWithRetry(databaseURL)
@@ -62,6 +85,13 @@ func main() {
 			Runtime:    server.Runtime,
 		}
 		runner.Register("model-load", loader.HandleLoad)
+		activator := embeddings.ActivateDeps{
+			Registry:   profiles,
+			ConfigPath: loader.ConfigPath,
+			Proxy:      server.Proxy,
+			Runtime:    server.Runtime,
+		}
+		runner.Register("profile-activate", activator.HandleActivate)
 		evalsImage := cmp.Or(os.Getenv("SOVEREIGN_EVALS_IMAGE"), "ghcr.io/lazarus-ai-research/sovereign-evals:latest")
 		runner.Register("evals-run", func(ctx context.Context, payload json.RawMessage) (any, error) {
 			var body struct {

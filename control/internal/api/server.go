@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,8 +17,10 @@ import (
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/hardware"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/indexes"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
@@ -52,7 +55,14 @@ type Server struct {
 	Jobs   *jobs.Runner
 	// Reports is the evals report directory (§18.10); empty disables.
 	Reports string
+	// Profiles enables §18.6; Indexes enables §18.7.
+	Profiles *embeddings.Registry
+	Indexes  *indexes.Store
 }
+
+// RebuildRequiredWarning is shown whenever embedding configuration changes
+// (design.md §11.2).
+const RebuildRequiredWarning = "Changing the embedding model requires rebuilding affected indexes. Existing vectors will remain available until the new index is complete."
 
 const sessionCookie = "sovereign_session"
 
@@ -410,6 +420,182 @@ func (s *Server) Handler() http.Handler {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(raw)
+		})
+	}
+
+	// ── §18.6 embedding profiles ─────────────────────────────────────────
+
+	if s.Profiles != nil {
+		mux.HandleFunc("GET "+p("/embedding-profiles"), func(w http.ResponseWriter, r *http.Request) {
+			profiles, err := s.Profiles.List()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"embedding_profiles": profiles})
+		})
+
+		mux.HandleFunc("GET "+p("/embedding-profiles/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			profile, err := s.Profiles.Get(r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, profile)
+		})
+
+		putProfile := func(w http.ResponseWriter, r *http.Request, id string) {
+			var profile embeddings.Profile
+			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid profile")
+				return
+			}
+			if err := s.Profiles.Put(id, profile); err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"profile": profile,
+				"warning": RebuildRequiredWarning,
+			})
+		}
+		mux.HandleFunc("POST "+p("/embedding-profiles"), func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				ID string `json:"id"`
+				embeddings.Profile
+			}
+			raw, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(raw, &body); err != nil || body.ID == "" {
+				errorJSON(w, http.StatusBadRequest, "profile id is required")
+				return
+			}
+			if err := s.Profiles.Put(body.ID, body.Profile); err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]any{
+				"id":      body.ID,
+				"profile": body.Profile,
+				"warning": RebuildRequiredWarning,
+			})
+		})
+		mux.HandleFunc("PATCH "+p("/embedding-profiles/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			putProfile(w, r, r.PathValue("id"))
+		})
+		mux.HandleFunc("DELETE "+p("/embedding-profiles/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Profiles.Delete(r.PathValue("id")); err != nil {
+				errorJSON(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"deleted": r.PathValue("id")})
+		})
+
+		mux.HandleFunc("POST "+p("/embedding-profiles/{id}/validate"), func(w http.ResponseWriter, r *http.Request) {
+			profile, err := s.Profiles.Get(r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, err.Error())
+				return
+			}
+			manifest, err := s.Runtime.Manifest(r.Context())
+			if err != nil {
+				errorJSON(w, http.StatusBadGateway, "runtime unreachable: "+err.Error())
+				return
+			}
+			result := map[string]any{"profile": r.PathValue("id"), "loaded": false}
+			if roles, ok := manifest["roles"].(map[string]any); ok {
+				if embedding, ok := roles["embedding"].(map[string]any); ok {
+					loaded := embedding["engine_model"] == profile.Model &&
+						embedding["status"] == "healthy"
+					result["loaded"] = loaded
+					if dims, ok := embedding["dimensions"].(float64); ok && loaded {
+						result["dimensions"] = int(dims)
+					}
+					if !loaded {
+						result["detail"] = "profile model is not the currently loaded embedding model; activate it first"
+					}
+				}
+			}
+			writeJSON(w, http.StatusOK, result)
+		})
+
+		if s.Jobs != nil {
+			mux.HandleFunc("POST "+p("/embedding-profiles/{id}/activate"), func(w http.ResponseWriter, r *http.Request) {
+				if _, err := s.Profiles.Get(r.PathValue("id")); err != nil {
+					errorJSON(w, http.StatusNotFound, err.Error())
+					return
+				}
+				jobID, err := s.Jobs.Enqueue(r.Context(), "profile-activate",
+					embeddings.ActivatePayload{ProfileID: r.PathValue("id")})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{
+					"job_id":  jobID,
+					"warning": RebuildRequiredWarning,
+				})
+			})
+		}
+	}
+
+	// ── §18.7 vector indexes ─────────────────────────────────────────────
+
+	if s.Indexes != nil {
+		mux.HandleFunc("GET "+p("/indexes"), func(w http.ResponseWriter, r *http.Request) {
+			versions, err := s.Indexes.List(r.Context())
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"indexes": versions})
+		})
+
+		mux.HandleFunc("POST "+p("/indexes"), func(w http.ResponseWriter, r *http.Request) {
+			var request indexes.CreateRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid index request")
+				return
+			}
+			version, err := s.Indexes.Create(r.Context(), request)
+			if err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, version)
+		})
+
+		mux.HandleFunc("GET "+p("/indexes/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			version, err := s.Indexes.Get(r.Context(), r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "index version not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, version)
+		})
+
+		mux.HandleFunc("POST "+p("/indexes/{id}/activate"), func(w http.ResponseWriter, r *http.Request) {
+			version, err := s.Indexes.Activate(r.Context(), r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, version)
+		})
+
+		mux.HandleFunc("DELETE "+p("/indexes/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Indexes.Delete(r.Context(), r.PathValue("id")); err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"deleted": r.PathValue("id")})
+		})
+
+		mux.HandleFunc("POST "+p("/indexes/{id}/rebuild"), func(w http.ResponseWriter, r *http.Request) {
+			// The re-embedding pipeline requires the real embedding runtime
+			// and the workspace's chunk store; lands with the remainder of
+			// the index-lifecycle milestone.
+			errorJSON(w, http.StatusNotImplemented,
+				"index rebuild is not implemented yet; create a new index version and re-ingest, then activate it")
 		})
 	}
 
