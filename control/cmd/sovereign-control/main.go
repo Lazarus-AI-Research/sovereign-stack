@@ -12,6 +12,7 @@ import (
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/api"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/backups"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/database"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
@@ -89,6 +90,14 @@ func main() {
 			Runtime:    server.Runtime,
 		}
 		runner.Register("model-load", loader.HandleLoad)
+		backupDeps := &backups.Deps{
+			Proxy:     server.Proxy,
+			Root:      sovereignRoot,
+			Databases: []string{"sovereign_control", "litellm", "workspace", "phoenix", "vectors"},
+		}
+		server.Backups = backupDeps
+		runner.Register("backup", backupDeps.HandleBackup)
+		runner.Register("backup-restore", backupDeps.HandleRestore)
 		activator := embeddings.ActivateDeps{
 			Registry:   profiles,
 			ConfigPath: loader.ConfigPath,

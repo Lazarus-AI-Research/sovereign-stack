@@ -19,13 +19,14 @@ allowed_operations:
   - pull
   - logs
   - run-evals
+  - backup
 
-# The only container the proxy may create. Nothing here is caller-controlled
+# The evals container the proxy may create. Nothing here is caller-controlled
 # except the suite name; env values come from the proxy's own environment.
+# ${DEPLOY_ROOT} expands from the proxy's environment (install-specific).
 evals:
   image_prefix: ghcr.io/lazarus-ai-research/sovereign-evals
   network: sovereign
-  # ${DEPLOY_ROOT} expands from the proxy's environment (install-specific).
   binds:
     - ${DEPLOY_ROOT}/reports:/sovereign/reports
   env_keys:
@@ -35,3 +36,19 @@ evals:
     - SOVEREIGN_RUNTIME_API_KEY
     - LITELLM_MASTER_KEY
     - PGVECTOR_CONNECTION_STRING
+
+# Fixed database dump/restore container (§18.11). The script is proxy-code-
+# fixed; only the validated backup stamp is caller-controlled.
+backup:
+  image: pgvector/pgvector:pg16
+  network: sovereign
+  binds:
+    - ${DEPLOY_ROOT}/backups:/backups
+  env_keys:
+    - POSTGRES_USER
+  databases:
+    - sovereign_control
+    - litellm
+    - workspace
+    - phoenix
+    - vectors

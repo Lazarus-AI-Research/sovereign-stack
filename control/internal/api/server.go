@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/backups"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
@@ -64,6 +65,8 @@ type Server struct {
 	// Branding and Features serve the file-backed product configuration.
 	Branding *branding.Store
 	Features *branding.Store
+	// Backups enables §18.11.
+	Backups *backups.Deps
 }
 
 // RebuildRequiredWarning is shown whenever embedding configuration changes
@@ -654,6 +657,52 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, doc)
+		})
+	}
+
+	// ── §18.11 backups ───────────────────────────────────────────────────
+
+	if s.Backups != nil {
+		mux.HandleFunc("GET "+p("/backups"), func(w http.ResponseWriter, r *http.Request) {
+			manifests, err := s.Backups.List()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if manifests == nil {
+				manifests = []backups.Manifest{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"backups": manifests})
+		})
+
+		if s.Jobs != nil {
+			mux.HandleFunc("POST "+p("/backups"), func(w http.ResponseWriter, r *http.Request) {
+				jobID, err := s.Jobs.Enqueue(r.Context(), "backup", map[string]string{})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+			})
+
+			mux.HandleFunc("POST "+p("/backups/{id}/restore"), func(w http.ResponseWriter, r *http.Request) {
+				jobID, err := s.Jobs.Enqueue(r.Context(), "backup-restore",
+					backups.RestorePayload{BackupID: r.PathValue("id")})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+			})
+		}
+
+		mux.HandleFunc("POST "+p("/backups/{id}/verify"), func(w http.ResponseWriter, r *http.Request) {
+			result, err := s.Backups.Verify(r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
 		})
 	}
 

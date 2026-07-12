@@ -5,12 +5,13 @@ package allowlist
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-// EvalsJob is the fixed shape of the only container the proxy may create.
+// EvalsJob is the fixed shape of the evals container the proxy may create.
 // Nothing about it is caller-controlled except the suite name.
 type EvalsJob struct {
 	ImagePrefix string   `yaml:"image_prefix"`
@@ -19,12 +20,24 @@ type EvalsJob struct {
 	EnvKeys     []string `yaml:"env_keys"`
 }
 
+// BackupJob is the fixed shape of the database dump/restore container. The
+// image is an exact reference and the script is proxy-code-fixed; only the
+// validated backup stamp is caller-controlled.
+type BackupJob struct {
+	Image     string   `yaml:"image"`
+	Network   string   `yaml:"network"`
+	Binds     []string `yaml:"binds"`
+	EnvKeys   []string `yaml:"env_keys"`
+	Databases []string `yaml:"databases"`
+}
+
 type Config struct {
-	AllowedProject       string   `yaml:"allowed_project"`
-	AllowedImagePrefixes []string `yaml:"allowed_image_prefixes"`
-	AllowedServices      []string `yaml:"allowed_services"`
-	AllowedOperations    []string `yaml:"allowed_operations"`
-	Evals                EvalsJob `yaml:"evals"`
+	AllowedProject       string    `yaml:"allowed_project"`
+	AllowedImagePrefixes []string  `yaml:"allowed_image_prefixes"`
+	AllowedServices      []string  `yaml:"allowed_services"`
+	AllowedOperations    []string  `yaml:"allowed_operations"`
+	Evals                EvalsJob  `yaml:"evals"`
+	Backup               BackupJob `yaml:"backup"`
 }
 
 func Load(path string) (*Config, error) {
@@ -96,4 +109,22 @@ func (c *Config) EvalsImageAllowed(ref string) Decision {
 		return deny(fmt.Sprintf("image %q is not the configured evals image", ref))
 	}
 	return c.ImageAllowed(ref)
+}
+
+var stampPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// BackupStampValid gates the only caller-controlled backup input.
+func BackupStampValid(stamp string) Decision {
+	if !stampPattern.MatchString(stamp) {
+		return deny(fmt.Sprintf("invalid backup stamp %q", stamp))
+	}
+	return allow()
+}
+
+// BackupConfigured reports whether the fixed backup job is usable.
+func (c *Config) BackupConfigured() Decision {
+	if c.Backup.Image == "" || len(c.Backup.Databases) == 0 {
+		return deny("backup jobs are not configured")
+	}
+	return allow()
 }

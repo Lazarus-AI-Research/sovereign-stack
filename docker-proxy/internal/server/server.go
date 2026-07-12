@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/docker-proxy/internal/allowlist"
@@ -178,6 +179,68 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"pulled": body.Image})
 		return body.Image, nil
+	}))
+
+	mux.HandleFunc("POST /internal/docker/backup/run", s.audited("backup", func(w http.ResponseWriter, r *http.Request) (string, error) {
+		var body struct {
+			Mode  string `json:"mode"` // dump | restore
+			Stamp string `json:"stamp"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Mode != "dump" && body.Mode != "restore") {
+			errorJSON(w, http.StatusBadRequest, "body must be {\"mode\": \"dump\"|\"restore\", \"stamp\": \"<id>\"}")
+			return "", fmt.Errorf("bad request")
+		}
+		if decision := allowlist.BackupStampValid(body.Stamp); !decision.Allowed {
+			errorJSON(w, http.StatusBadRequest, decision.Reason)
+			return body.Stamp, fmt.Errorf("%s", decision.Reason)
+		}
+		if decision := s.Allowlist.BackupConfigured(); !decision.Allowed {
+			errorJSON(w, http.StatusServiceUnavailable, decision.Reason)
+			return body.Stamp, fmt.Errorf("%s", decision.Reason)
+		}
+
+		// The script is proxy-code-fixed; only the validated stamp and the
+		// configured database list interpolate.
+		var script string
+		databases := strings.Join(s.Allowlist.Backup.Databases, " ")
+		if body.Mode == "dump" {
+			script = fmt.Sprintf(
+				`set -e; mkdir -p /backups/%[1]s; for db in %[2]s; do pg_dump -h postgres -U "$POSTGRES_USER" -d "$db" | gzip > "/backups/%[1]s/$db.sql.gz"; done`,
+				body.Stamp, databases)
+		} else {
+			script = fmt.Sprintf(
+				`set -e; for db in %[2]s; do gunzip -c "/backups/%[1]s/$db.sql.gz" | psql -h postgres -U "$POSTGRES_USER" -d "$db" -q; done`,
+				body.Stamp, databases)
+		}
+
+		var env []string
+		for _, key := range s.Allowlist.Backup.EnvKeys {
+			if value := os.Getenv(key); value != "" {
+				env = append(env, key+"="+value)
+			}
+		}
+		// pg tools read PGPASSWORD
+		if password := os.Getenv("POSTGRES_PASSWORD"); password != "" {
+			env = append(env, "PGPASSWORD="+password)
+		}
+		binds := make([]string, 0, len(s.Allowlist.Backup.Binds))
+		for _, bind := range s.Allowlist.Backup.Binds {
+			binds = append(binds, os.ExpandEnv(bind))
+		}
+		id, err := s.Docker.RunJob(
+			r.Context(),
+			s.Allowlist.Backup.Image,
+			s.Allowlist.Backup.Network,
+			binds,
+			env,
+			[]string{"sh", "-c", script},
+		)
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return body.Stamp, err
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"container_id": id, "mode": body.Mode, "stamp": body.Stamp})
+		return fmt.Sprintf("mode=%s stamp=%s id=%s", body.Mode, body.Stamp, id), nil
 	}))
 
 	mux.HandleFunc("POST /internal/docker/evals/run", s.audited("run-evals", func(w http.ResponseWriter, r *http.Request) (string, error) {

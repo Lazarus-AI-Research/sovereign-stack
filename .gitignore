@@ -21,6 +21,7 @@ evals/build/
 deploy/models/
 deploy/logs/
 deploy/reports/
+deploy/backups/
 
 # OS
 .DS_Store

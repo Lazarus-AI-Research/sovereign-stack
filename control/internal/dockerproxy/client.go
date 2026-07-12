@@ -101,3 +101,13 @@ func (c *Client) RunEvals(ctx context.Context, image, suite string) (string, err
 		map[string]string{"image": image, "suite": suite}, &out)
 	return out.ContainerID, err
 }
+
+// RunBackup launches the fixed backup container (mode: dump or restore).
+func (c *Client) RunBackup(ctx context.Context, mode, stamp string) (string, error) {
+	var out struct {
+		ContainerID string `json:"container_id"`
+	}
+	err := c.do(ctx, http.MethodPost, "/internal/docker/backup/run",
+		map[string]string{"mode": mode, "stamp": stamp}, &out)
+	return out.ContainerID, err
+}
