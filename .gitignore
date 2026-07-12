@@ -6,9 +6,8 @@ deploy/.env
 bin/
 *.test
 
-# Web frontend
-control/internal/web/dist/*
-!control/internal/web/dist/index.html
+# Web frontend (built dist is tracked: go:embed needs it and the appliance
+# ships it; rebuild with `make web`)
 control/web/node_modules/
 
 # Python

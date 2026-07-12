@@ -11,6 +11,9 @@ build: ## Build Go services
 	cd control && go build ./...
 	cd docker-proxy && go build ./...
 
+web: ## Build the Control UI into control/internal/web/dist
+	cd control/web && npm install --no-fund --no-audit && npm run build
+
 test: test-go test-evals ## Run all tests
 
 test-go: ## Run Go tests
