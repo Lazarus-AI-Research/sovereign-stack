@@ -277,6 +277,14 @@
             "type": "string"
           },
           "description": "Extra engine CLI flags (escape hatch, \u00a72.9 warn-don't-block)."
+        },
+        "tool_call_parser": {
+          "type": "string",
+          "description": "Tool-call parser name; unset = inferred from the model, \"off\" disables tool calling."
+        },
+        "reasoning_parser": {
+          "type": "string",
+          "description": "Reasoning parser name; unset = inferred from the model, \"off\" disables reasoning separation."
         }
       },
       "if": {
