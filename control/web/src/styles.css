@@ -204,3 +204,8 @@ th {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+.wordmark {
+  height: 22px;
+  filter: invert(1);
+}

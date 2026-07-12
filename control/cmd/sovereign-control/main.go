@@ -23,6 +23,7 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/web"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 )
 
 var version = "dev" // set via -ldflags at release build
@@ -48,6 +49,8 @@ func main() {
 	registry := models.NewRegistry(sovereignRoot + "/config/model-registry.yaml")
 	server.Models = registry
 	server.Reports = sovereignRoot + "/reports"
+	server.SovereignRoot = sovereignRoot
+	server.Workspace = workspace.New(cmp.Or(os.Getenv("WORKSPACE_BASE_URL"), "http://sovereign-workspace:3001"))
 	profiles := embeddings.NewRegistry(sovereignRoot + "/config/embedding-profiles.yaml")
 	server.Profiles = profiles
 	server.GatewayConfigPath = sovereignRoot + "/config/litellm/config.yaml"

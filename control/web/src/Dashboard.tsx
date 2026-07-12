@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Manifest, RuntimeErrors, Status } from "./api";
+import lazarusLogo from "./assets/lazarus_logo.png";
 
 const RUNTIME_STATES = [
   "initializing",
@@ -53,6 +54,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="page">
       <header>
+        <img src={lazarusLogo} alt="Lazarus" className="wordmark" />
         <h1>Sovereign Control</h1>
         <div className="spacer" />
         <span className="muted">{status?.control.version}</span>

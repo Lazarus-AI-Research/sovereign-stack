@@ -1,8 +1,13 @@
-# Customer-facing branding, applied by Sovereign Control.
+# Customer-facing branding, applied by Sovereign Control (§16).
+# Defaults are Lazarus AI branding; customers may replace any of it.
+# Asset paths are rooted at the deploy directory and served by Caddy
+# under /branding.
 # Validated against schemas/branding.schema.json.
-product_name: Sovereign Stack
+product_name: Lazarus
 company_name: Lazarus AI Research
-logo: /branding/logo.svg
+logo: /branding/lazarus_logo.png
+logo_animated: /branding/lazarus-anim.gif
+favicon: /branding/lazarus_favicon.png
 colors:
   primary: "#1a1a2e"
   accent: "#e94560"

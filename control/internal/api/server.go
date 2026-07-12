@@ -26,6 +26,7 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 )
 
 const BasePath = "/api/control/v1"
@@ -67,6 +68,10 @@ type Server struct {
 	Features *branding.Store
 	// Backups enables §18.11.
 	Backups *backups.Deps
+	// Workspace enables §18.9 (branding apply, status).
+	Workspace *workspace.Client
+	// SovereignRoot is the deploy mount (branding asset paths root here).
+	SovereignRoot string
 }
 
 // RebuildRequiredWarning is shown whenever embedding configuration changes
@@ -704,6 +709,46 @@ func (s *Server) Handler() http.Handler {
 			}
 			writeJSON(w, http.StatusOK, result)
 		})
+	}
+
+	// ── §18.9 workspace ──────────────────────────────────────────────────
+
+	if s.Workspace != nil {
+		mux.HandleFunc("GET "+p("/workspace/status"), func(w http.ResponseWriter, r *http.Request) {
+			name, _ := s.Workspace.AppName(r.Context())
+			writeJSON(w, http.StatusOK, map[string]any{
+				"reachable": s.Workspace.Reachable(r.Context()),
+				"app_name":  name,
+			})
+		})
+
+		if s.Branding != nil {
+			mux.HandleFunc("POST "+p("/workspace/branding/apply"), func(w http.ResponseWriter, r *http.Request) {
+				doc, err := s.Branding.Get()
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				applied := map[string]any{}
+				if name, _ := doc["product_name"].(string); name != "" {
+					if err := s.Workspace.SetAppName(r.Context(), name); err != nil {
+						errorJSON(w, http.StatusBadGateway, err.Error())
+						return
+					}
+					applied["app_name"] = name
+				}
+				if logo, _ := doc["logo"].(string); logo != "" {
+					// branding paths are rooted at the deploy mount
+					path := filepath.Join(s.SovereignRoot, strings.TrimPrefix(logo, "/"))
+					if err := s.Workspace.UploadLogo(r.Context(), path); err != nil {
+						errorJSON(w, http.StatusBadGateway, err.Error())
+						return
+					}
+					applied["logo"] = logo
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"applied": applied})
+			})
+		}
 	}
 
 	// ── §18.8 gateway ────────────────────────────────────────────────────
