@@ -48,6 +48,7 @@ func main() {
 	server.Reports = sovereignRoot + "/reports"
 	profiles := embeddings.NewRegistry(sovereignRoot + "/config/embedding-profiles.yaml")
 	server.Profiles = profiles
+	server.GatewayConfigPath = sovereignRoot + "/config/litellm/config.yaml"
 
 	if vectorsURL := os.Getenv("PGVECTOR_CONNECTION_STRING"); vectorsURL != "" {
 		go func() {

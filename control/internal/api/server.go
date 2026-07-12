@@ -58,6 +58,8 @@ type Server struct {
 	// Profiles enables §18.6; Indexes enables §18.7.
 	Profiles *embeddings.Registry
 	Indexes  *indexes.Store
+	// GatewayConfigPath enables gateway config regeneration (§18.8).
+	GatewayConfigPath string
 }
 
 // RebuildRequiredWarning is shown whenever embedding configuration changes
@@ -598,6 +600,65 @@ func (s *Server) Handler() http.Handler {
 				"index rebuild is not implemented yet; create a new index version and re-ingest, then activate it")
 		})
 	}
+
+	// ── §18.8 gateway ────────────────────────────────────────────────────
+
+	mux.HandleFunc("GET "+p("/gateway/status"), func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"healthy": s.Gateway.Healthy(r.Context())})
+	})
+
+	mux.HandleFunc("GET "+p("/gateway/models"), func(w http.ResponseWriter, r *http.Request) {
+		gatewayModels, err := s.Gateway.Models(r.Context())
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"models": gatewayModels})
+	})
+
+	mux.HandleFunc("GET "+p("/gateway/keys"), func(w http.ResponseWriter, r *http.Request) {
+		keys, err := s.Gateway.ListKeys(r.Context())
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, keys)
+	})
+
+	mux.HandleFunc("POST "+p("/gateway/keys"), func(w http.ResponseWriter, r *http.Request) {
+		var request gateway.KeyRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid key request")
+			return
+		}
+		key, err := s.Gateway.GenerateKey(r.Context(), request)
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, key)
+	})
+
+	if s.GatewayConfigPath != "" && s.Profiles != nil && s.Models != nil {
+		mux.HandleFunc("POST "+p("/gateway/config/regenerate"), func(w http.ResponseWriter, r *http.Request) {
+			if err := gateway.GenerateConfig(s.GatewayConfigPath, s.Models, s.Profiles); err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{
+				"generated": s.GatewayConfigPath,
+				"note":      "POST /gateway/reload to apply",
+			})
+		})
+	}
+
+	mux.HandleFunc("POST "+p("/gateway/reload"), func(w http.ResponseWriter, r *http.Request) {
+		if err := s.Proxy.Restart(r.Context(), "sovereign-gateway"); err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"restarting": "sovereign-gateway"})
+	})
 
 	if s.UI != nil {
 		mux.Handle("GET /", s.UI)
