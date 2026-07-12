@@ -57,3 +57,7 @@ jobs:
         run: docker exec mock sovereign-runtime-healthcheck --live
       - if: always()
         run: docker stop mock || true
+      - name: §25 lifecycle chaos suite
+        run: |
+          pip install pytest httpx
+          pytest tests/runtime-contract -v
