@@ -10,3 +10,6 @@ services:
     environment:
       SOVEREIGN_PROFILE: ${SOVEREIGN_CPU_PROFILE:-cpu-x86_64}
       VLLM_BACKEND: cpu
+      # weights live in the shared ./models mount (offline-bundle-able)
+      HF_HOME: /models/hf
+      VLLM_CPU_KVCACHE_SPACE: "4"
