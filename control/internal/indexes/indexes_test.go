@@ -39,7 +39,7 @@ func create(t *testing.T, ctx context.Context, store *Store, profile string) Ver
 	version, err := store.Create(ctx, CreateRequest{
 		WorkspaceID:    workspace,
 		ProfileID:      profile,
-		ModelID:        "Qwen/Qwen3-Embedding-0.6B",
+		ModelID:        "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
 		ModelRevision:  "main",
 		Dimensions:     1024,
 		Normalization:  "l2",

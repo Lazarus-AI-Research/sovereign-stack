@@ -10,9 +10,9 @@ func TestProfileRegistryCRUD(t *testing.T) {
 
 	profile := Profile{
 		Provider:        "sovereign-runtime",
-		Model:           "Qwen/Qwen3-Embedding-0.6B",
+		Model:           "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
 		Revision:        "main",
-		ServedModelName: "embedding-text-compact",
+		ServedModelName: "embedding-omni-default",
 		Pooling:         "last",
 		Normalization:   "l2",
 		Modalities:      []string{"text"},
@@ -28,7 +28,7 @@ func TestProfileRegistryCRUD(t *testing.T) {
 	}
 
 	got, err := registry.Get("text-compact")
-	if err != nil || got.ServedModelName != "embedding-text-compact" {
+	if err != nil || got.ServedModelName != "embedding-omni-default" {
 		t.Fatalf("get: %v %+v", err, got)
 	}
 

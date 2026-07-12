@@ -30,15 +30,15 @@ roles:
     memory_weight: 82
     max_concurrent_requests: 2
 
-  # Text-compact embedding fallback (§10.2). Enabled with the multi-role
-  # milestone (M8); until then the runtime serves generation only.
+  # The preferred omni embedding model (§10.1), text modality first; image
+  # and audio arrive with the omni conformance milestone (§10.3).
   embedding:
     enabled: false
     task: embed
     source: huggingface
-    model: Qwen/Qwen3-Embedding-0.6B
+    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
     revision: main
-    served_model_name: embedding-text-compact
+    served_model_name: embedding-omni-default
     priority: low
     memory_weight: 18
     max_concurrent_requests: 2
