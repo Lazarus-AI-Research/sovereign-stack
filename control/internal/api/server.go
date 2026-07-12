@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
@@ -60,6 +61,9 @@ type Server struct {
 	Indexes  *indexes.Store
 	// GatewayConfigPath enables gateway config regeneration (§18.8).
 	GatewayConfigPath string
+	// Branding and Features serve the file-backed product configuration.
+	Branding *branding.Store
+	Features *branding.Store
 }
 
 // RebuildRequiredWarning is shown whenever embedding configuration changes
@@ -598,6 +602,58 @@ func (s *Server) Handler() http.Handler {
 			// the index-lifecycle milestone.
 			errorJSON(w, http.StatusNotImplemented,
 				"index rebuild is not implemented yet; create a new index version and re-ingest, then activate it")
+		})
+	}
+
+	// ── branding + feature flags (§26 product capabilities) ─────────────
+
+	if s.Branding != nil {
+		mux.HandleFunc("GET "+p("/branding"), func(w http.ResponseWriter, r *http.Request) {
+			doc, err := s.Branding.Get()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, doc)
+		})
+		mux.HandleFunc("PUT "+p("/branding"), func(w http.ResponseWriter, r *http.Request) {
+			var doc map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid branding document")
+				return
+			}
+			if err := s.Branding.Put(doc); err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, doc)
+		})
+	}
+
+	if s.Features != nil {
+		mux.HandleFunc("GET "+p("/features"), func(w http.ResponseWriter, r *http.Request) {
+			doc, err := s.Features.Get()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, doc)
+		})
+		mux.HandleFunc("PUT "+p("/features"), func(w http.ResponseWriter, r *http.Request) {
+			var doc map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid feature flags document")
+				return
+			}
+			if err := branding.ValidateFlags(doc); err != nil {
+				errorJSON(w, http.StatusUnprocessableEntity, err.Error())
+				return
+			}
+			if err := s.Features.Put(doc); err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, doc)
 		})
 	}
 

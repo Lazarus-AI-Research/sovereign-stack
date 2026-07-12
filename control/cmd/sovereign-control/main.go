@@ -12,6 +12,7 @@ import (
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/api"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/database"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
@@ -49,6 +50,8 @@ func main() {
 	profiles := embeddings.NewRegistry(sovereignRoot + "/config/embedding-profiles.yaml")
 	server.Profiles = profiles
 	server.GatewayConfigPath = sovereignRoot + "/config/litellm/config.yaml"
+	server.Branding = branding.NewStore(sovereignRoot+"/config/branding.yaml", "Customer branding")
+	server.Features = branding.NewStore(sovereignRoot+"/config/feature-flags.yaml", "Product feature flags")
 
 	if vectorsURL := os.Getenv("PGVECTOR_CONNECTION_STRING"); vectorsURL != "" {
 		go func() {
