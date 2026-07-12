@@ -1,9 +1,16 @@
-# Runtime overlay: Apple Metal arm64 (design.md §8.2).
-# Requires Docker Desktop; host-integration details stay inside the runtime
-# image and contract (design.md §2.6).
+# Runtime overlay: Apple Metal arm64 — Phase 2, host inference agent
+# (design.md §2.6, §8.2). Inference runs host-side (launchd-managed
+# llama.cpp on Metal); the container keeps the contract unchanged.
 services:
   sovereign-runtime:
     image: ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
+    volumes:
+      - ./config/runtime.metal.yaml:/runtime-config/runtime.yaml:ro
+      - ./models:/models
+      - runtime_state:/runtime-state
     environment:
       SOVEREIGN_PROFILE: metal-arm64
-      VLLM_BACKEND: metal
+      SOVEREIGN_ENGINE_BACKEND: agent
+      SOVEREIGN_AGENT_URL: http://host.docker.internal:9100
+      SOVEREIGN_AGENT_TOKEN: ${SOVEREIGN_AGENT_TOKEN}
+      SOVEREIGN_AGENT_BACKEND_ID: metal
