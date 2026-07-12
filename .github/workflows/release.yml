@@ -1,0 +1,46 @@
+name: release
+
+# On a version tag: build every application image from one commit, stamped
+# from the tag, and push to GHCR (design.md §7 — immutable version tags).
+# Runtime images build from the sovereign-vllm repo on its own cadence.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - name: sovereign-control
+            dockerfile: control/Dockerfile
+          - name: sovereign-docker-proxy
+            dockerfile: docker-proxy/Dockerfile
+          - name: sovereign-evals
+            dockerfile: evals/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+          tags: |
+            ghcr.io/lazarus-ai-research/${{ matrix.image.name }}:${{ env.VERSION }}
+          platforms: linux/amd64,linux/arm64
