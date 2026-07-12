@@ -2,9 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/runtime-config.schema.json",
   "title": "Sovereign Runtime Configuration",
-  "description": "Schema for runtime.yaml (design.md §12). Validated by the appliance launcher at startup; validation failure yields state configuration_error, never a crash loop (§3.2).",
+  "description": "Schema for runtime.yaml (design.md \u00a712). Validated by the appliance launcher at startup; validation failure yields state configuration_error, never a crash loop (\u00a73.2).",
   "type": "object",
-  "required": ["schema_version", "runtime", "roles"],
+  "required": [
+    "schema_version",
+    "runtime",
+    "roles"
+  ],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
@@ -13,76 +17,151 @@
     },
     "runtime": {
       "type": "object",
-      "required": ["listen_address", "port", "profile"],
+      "required": [
+        "listen_address",
+        "port",
+        "profile"
+      ],
       "additionalProperties": false,
       "properties": {
-        "listen_address": { "type": "string", "minLength": 1 },
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "api_key_env": { "type": "string", "minLength": 1 },
-        "profile": { "$ref": "#/$defs/profile" }
+        "listen_address": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "api_key_env": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "$ref": "#/$defs/profile"
+        }
       }
     },
     "startup": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "smoke_test_on_start": { "type": "boolean", "default": true },
-        "remain_alive_on_configuration_error": { "type": "boolean", "default": true },
-        "fail_process_on_generation_error": { "type": "boolean", "default": false },
-        "fail_process_on_embedding_error": { "type": "boolean", "default": false }
+        "smoke_test_on_start": {
+          "type": "boolean",
+          "default": true
+        },
+        "remain_alive_on_configuration_error": {
+          "type": "boolean",
+          "default": true
+        },
+        "fail_process_on_generation_error": {
+          "type": "boolean",
+          "default": false
+        },
+        "fail_process_on_embedding_error": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "roles": {
       "type": "object",
-      "description": "Required roles per §9.2: generation and embedding. Optional roles: vision, audio, rerank.",
-      "required": ["generation", "embedding"],
+      "description": "Required roles per \u00a79.2: generation and embedding. Optional roles: vision, audio, rerank.",
+      "required": [
+        "generation",
+        "embedding"
+      ],
       "additionalProperties": false,
       "properties": {
         "generation": {
           "allOf": [
-            { "$ref": "#/$defs/roleCommon" },
             {
-              "properties": { "task": { "const": "generate" } },
-              "required": ["task"]
+              "$ref": "#/$defs/roleCommon"
+            },
+            {
+              "properties": {
+                "task": {
+                  "const": "generate"
+                }
+              },
+              "required": [
+                "task"
+              ]
             }
           ]
         },
         "embedding": {
           "allOf": [
-            { "$ref": "#/$defs/roleCommon" },
+            {
+              "$ref": "#/$defs/roleCommon"
+            },
             {
               "properties": {
-                "task": { "const": "embed" },
-                "pooling": { "$ref": "#/$defs/pooling" },
-                "normalization": { "$ref": "#/$defs/normalization" },
-                "throttle_when_generation_queue_above": { "type": "integer", "minimum": 0 }
+                "task": {
+                  "const": "embed"
+                },
+                "pooling": {
+                  "$ref": "#/$defs/pooling"
+                },
+                "normalization": {
+                  "$ref": "#/$defs/normalization"
+                },
+                "throttle_when_generation_queue_above": {
+                  "type": "integer",
+                  "minimum": 0
+                }
               },
-              "required": ["task"]
+              "required": [
+                "task"
+              ]
             }
           ]
         },
-        "vision": { "$ref": "#/$defs/roleCommon" },
-        "audio": { "$ref": "#/$defs/roleCommon" },
-        "rerank": { "$ref": "#/$defs/roleCommon" }
+        "vision": {
+          "$ref": "#/$defs/roleCommon"
+        },
+        "audio": {
+          "$ref": "#/$defs/roleCommon"
+        },
+        "rerank": {
+          "$ref": "#/$defs/roleCommon"
+        }
       }
     },
     "observability": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "prometheus": { "type": "boolean", "default": true },
-        "structured_logs": { "type": "boolean", "default": true },
-        "otlp_endpoint": { "type": "string" }
+        "prometheus": {
+          "type": "boolean",
+          "default": true
+        },
+        "structured_logs": {
+          "type": "boolean",
+          "default": true
+        },
+        "otlp_endpoint": {
+          "type": "string"
+        }
       }
     },
     "privacy": {
       "type": "object",
-      "description": "Content-capture defaults are locked off (design.md §2.3–2.4).",
+      "description": "Content-capture defaults are locked off (design.md \u00a72.3\u20132.4).",
       "additionalProperties": false,
       "properties": {
-        "prompt_logging": { "type": "boolean", "default": false },
-        "response_logging": { "type": "boolean", "default": false },
-        "full_trace": { "type": "boolean", "default": false }
+        "prompt_logging": {
+          "type": "boolean",
+          "default": false
+        },
+        "response_logging": {
+          "type": "boolean",
+          "default": false
+        },
+        "full_trace": {
+          "type": "boolean",
+          "default": false
+        }
       }
     }
   },
@@ -103,49 +182,118 @@
     },
     "source": {
       "type": "string",
-      "enum": ["huggingface", "modelscope", "local"]
+      "enum": [
+        "huggingface",
+        "modelscope",
+        "local"
+      ]
     },
     "priority": {
       "type": "string",
-      "enum": ["high", "normal", "low"]
+      "enum": [
+        "high",
+        "normal",
+        "low"
+      ]
     },
     "pooling": {
       "type": "string",
-      "enum": ["last", "mean", "cls"]
+      "enum": [
+        "last",
+        "mean",
+        "cls"
+      ]
     },
     "normalization": {
       "type": "string",
-      "enum": ["l2", "none"]
+      "enum": [
+        "l2",
+        "none"
+      ]
     },
     "roleCommon": {
       "type": "object",
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "task": { "type": "string", "enum": ["generate", "embed", "rerank"] },
-        "source": { "$ref": "#/$defs/source" },
-        "model": { "type": "string", "minLength": 1 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "task": {
+          "type": "string",
+          "enum": [
+            "generate",
+            "embed",
+            "rerank"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
         "revision": {
           "type": "string",
           "minLength": 1,
-          "description": "Must be an immutable revision in production (§10.1)."
+          "description": "Must be an immutable revision in production (\u00a710.1)."
         },
-        "served_model_name": { "type": "string", "minLength": 1 },
-        "max_model_len": { "type": "integer", "minimum": 1 },
-        "priority": { "$ref": "#/$defs/priority" },
+        "served_model_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_model_len": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "priority": {
+          "$ref": "#/$defs/priority"
+        },
         "memory_weight": {
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "description": "Best-effort policy, not a hard partition (§3.5)."
+          "description": "Best-effort policy, not a hard partition (\u00a73.5)."
         },
-        "max_concurrent_requests": { "type": "integer", "minimum": 1 },
-        "pooling": { "$ref": "#/$defs/pooling" },
-        "normalization": { "$ref": "#/$defs/normalization" },
-        "throttle_when_generation_queue_above": { "type": "integer", "minimum": 0 }
+        "max_concurrent_requests": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pooling": {
+          "$ref": "#/$defs/pooling"
+        },
+        "normalization": {
+          "$ref": "#/$defs/normalization"
+        },
+        "throttle_when_generation_queue_above": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "engine_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Extra engine CLI flags (escape hatch, \u00a72.9 warn-don't-block)."
+        }
       },
-      "if": { "properties": { "enabled": { "const": true } } },
-      "then": { "required": ["enabled", "source", "model", "served_model_name"] }
+      "if": {
+        "properties": {
+          "enabled": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "enabled",
+          "source",
+          "model",
+          "served_model_name"
+        ]
+      }
     }
   }
 }

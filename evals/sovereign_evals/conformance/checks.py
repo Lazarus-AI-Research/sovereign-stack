@@ -168,7 +168,9 @@ def check_chat(ctx: Context) -> CheckResult:
         json={
             "model": model,
             "messages": [{"role": "user", "content": "Reply with the single word: sovereign"}],
-            "max_tokens": 16,
+            # generous budget: reasoning models spend tokens thinking before
+            # any content appears
+            "max_tokens": 512,
         },
     )
     if resp.status_code != 200:
