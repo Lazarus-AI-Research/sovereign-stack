@@ -72,6 +72,26 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestMetrics(t *testing.T) {
+	rec := get(testControl(t), "/metrics")
+	if rec.Code != 200 {
+		t.Fatalf("metrics: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "version=0.0.4") {
+		t.Errorf("metrics content type: %q", got)
+	}
+	for _, metric := range []string{
+		"sovereign_control_up 1",
+		"sovereign_control_runtime_up 1",
+		"sovereign_control_gateway_up 0",
+		"sovereign_control_docker_proxy_up 1",
+	} {
+		if !strings.Contains(rec.Body.String(), metric) {
+			t.Errorf("metrics missing %q:\n%s", metric, rec.Body.String())
+		}
+	}
+}
+
 func TestStatusAggregation(t *testing.T) {
 	rec := get(testControl(t), BasePath+"/status")
 	if rec.Code != 200 {

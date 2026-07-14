@@ -11,10 +11,10 @@ scrape_configs:
     static_configs:
       - targets: ["sovereign-runtime:8000"]
 
-  - job_name: sovereign-gateway
-    static_configs:
-      - targets: ["sovereign-gateway:4000"]
-
   - job_name: sovereign-control
+    # Control exports authenticated LiteLLM health as
+    # sovereign_control_gateway_up. Direct LiteLLM /metrics scraping requires
+    # a master key in the supported image and may be license-gated; never put
+    # that credential in this tracked configuration.
     static_configs:
       - targets: ["sovereign-control:8080"]

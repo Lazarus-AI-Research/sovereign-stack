@@ -239,10 +239,21 @@ def metrics_available(ctx: SuiteContext, params: dict) -> Result:
     if runtime_metrics.status_code != 200 or "# HELP" not in runtime_metrics.text:
         return False, "runtime /metrics not serving Prometheus text"
     resp = httpx.get(
-        f"{ctx.endpoints.prometheus_base_url}/api/v1/query",
-        params={"query": "up"},
+        f"{ctx.endpoints.prometheus_base_url}/api/v1/targets",
+        params={"state": "active"},
         timeout=30.0,
     )
     body = resp.json()
-    ok = resp.status_code == 200 and body.get("status") == "success" and body["data"]["result"]
-    return bool(ok), "runtime metrics + prometheus query ok" if ok else f"prometheus: {body}"
+    if resp.status_code != 200 or body.get("status") != "success":
+        return False, f"prometheus targets: {body}"
+    targets = body.get("data", {}).get("activeTargets", [])
+    if not targets:
+        return False, "prometheus has no active scrape targets"
+    down = sorted(
+        target.get("labels", {}).get("job", target.get("scrapeUrl", "unknown"))
+        for target in targets
+        if target.get("health") != "up"
+    )
+    if down:
+        return False, f"prometheus targets down: {down}"
+    return True, f"runtime metrics + {len(targets)} prometheus targets up"

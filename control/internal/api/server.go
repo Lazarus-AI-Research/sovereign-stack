@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -103,6 +104,49 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func errorJSON(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func metricValue(ok bool) int {
+	if ok {
+		return 1
+	}
+	return 0
+}
+
+// metrics exposes non-sensitive service health for Sovereign Observe. LiteLLM
+// protects its own /metrics endpoint with the master key in the supported
+// image, so Control performs the authenticated health probes and exports the
+// resulting gauges without placing credentials in Prometheus configuration.
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	runtimeUp := false
+	if s.Runtime != nil {
+		_, err := s.Runtime.Live(ctx)
+		runtimeUp = err == nil
+	}
+	gatewayUp := s.Gateway != nil && s.Gateway.Healthy(ctx)
+	proxyUp := false
+	if s.Proxy != nil {
+		_, err := s.Proxy.Status(ctx)
+		proxyUp = err == nil
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	fmt.Fprintf(w, `# HELP sovereign_control_up Whether Sovereign Control is serving requests.
+# TYPE sovereign_control_up gauge
+sovereign_control_up 1
+# HELP sovereign_control_runtime_up Whether Control can reach Sovereign Runtime.
+# TYPE sovereign_control_runtime_up gauge
+sovereign_control_runtime_up %d
+# HELP sovereign_control_gateway_up Whether Control can reach the LiteLLM gateway.
+# TYPE sovereign_control_gateway_up gauge
+sovereign_control_gateway_up %d
+# HELP sovereign_control_docker_proxy_up Whether Control can reach the restricted Docker proxy.
+# TYPE sovereign_control_docker_proxy_up gauge
+sovereign_control_docker_proxy_up %d
+`, metricValue(runtimeUp), metricValue(gatewayUp), metricValue(proxyUp))
 }
 
 func (s *Server) Handler() http.Handler {
@@ -809,6 +853,8 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusAccepted, map[string]string{"restarting": "sovereign-gateway"})
 	})
+
+	mux.HandleFunc("GET /metrics", s.metrics)
 
 	if s.UI != nil {
 		mux.Handle("GET /", s.UI)
