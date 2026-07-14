@@ -84,6 +84,7 @@ services:
       # Lazarus streaming-spinner injection; regenerated per pinned
       # AnythingLLM version (§16 release gate).
       - ./config/workspace/_index.html:/app/server/public/_index.html:ro
+      - ./config/workspace/index.css:/app/server/public/index.css:ro
     expose:
       - "3001"
     networks:
