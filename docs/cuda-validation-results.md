@@ -12,7 +12,7 @@ single|multi`; all reports land in `~/cuda-validation/`.
 |---|---|---|
 | Single-role conformance (gemma generation only) | **13 passed / 1 skipped** (embedding disabled by config) | `conformance-cuda-single.json` |
 | M12 multimodal embedding validation (LCO alone, port 8976) | **16/16** — text, image, audio | `mm-validation.json` (harness: `validate-mm.py`) |
-| Multi-role conformance (gemma + LCO, one process) | _pending — run in progress, section updated below_ | `conformance-cuda-multi.json` |
+| Multi-role conformance (gemma + LCO, one process) | **14/14** — both roles healthy, zero skips | `conformance-cuda-multi.json` |
 
 Models are the locked user decisions: generation `google/gemma-4-E2B-it`
 (alias `assistant-large`), embedding
@@ -28,9 +28,34 @@ image↔caption cosine matrix puts every image nearest its own caption
 
 ## Multi-role conformance (this run)
 
-_Pending — being filled in by the run currently executing._
+**14 passed / 0 failed / 0 skipped** with `ready=true`. Generation and
+embedding ran concurrently on GPU 0 behind the appliance's single port. The
+validated 24GB allocation is:
 
-## The two bugs fixed
+| Role | `max_model_len` | `memory_weight` | Effective vLLM fraction | Observed model / KV memory |
+|---|---:|---:|---:|---:|
+| Generation | 2048 | 52 | 0.478 | 9.8 GiB / 1.18 GiB |
+| Embedding | 2048 | 40 | 0.368 | 8.26 GiB / 0.18 GiB |
+
+Both roles use `--enforce-eager` and `max_concurrent_requests: 2`. Peak
+device allocation was 21,841 MiB. The manifest reported `healthy`, both model
+aliases appeared in `/v1/models`, chat/completions/streaming and text
+embedding passed, and the embedding role advertised `[text, image, audio]`.
+
+Two process settings are load-bearing on the direct `AsyncLLM` appliance
+path:
+
+- `VLLM_BACKEND=cuda` selects the appliance's CUDA memory policy. Without it,
+  the adapter identifies itself as CPU and omits each role's
+  `--gpu-memory-utilization`, so both engines independently request vLLM's
+  default 92%.
+- `VLLM_WORKER_MULTIPROC_METHOD=spawn` prevents the second engine from being
+  forked out of a parent that already owns a live engine and many threads.
+  The forked embedding engine stalled during NCCL model-parallel
+  initialization; spawn loaded both roles normally. The appliance now
+  defaults this setting while preserving an explicit operator override.
+
+## Bugs fixed
 
 ### 1. flashinfer JIT could not find ninja → generation role dead on CUDA
 
@@ -75,6 +100,21 @@ appliance's unknown-flag filter silently dropped the old spelling, so the
 role config's `pooling: last` / `normalization: l2` never reached the
 engine. macOS conformance had passed only because engine defaults happened
 to match. Now the appliance emits the 0.25 spellings.
+
+### 3. Multi-role CUDA startup used an unsafe fork
+
+**Symptom:** with memory limits correctly applied, generation loaded and the
+embedding EngineCore started, opened a CUDA context, then stopped making
+progress during model-parallel initialization.
+
+**Cause:** the appliance constructs `AsyncLLM` directly and therefore bypassed
+the `vllm serve` entrypoint's multiprocessing guard. vLLM defaulted to `fork`;
+the second role was forked after the parent already owned a live engine and
+hundreds of threads.
+
+**Fix:** the appliance defaults `VLLM_WORKER_MULTIPROC_METHOD=spawn` before
+vLLM is imported. An explicit operator setting is still respected.
+Commit `b5af671` in `~/sovereign-vllm`.
 
 ## The M12 plugin approach
 
@@ -127,6 +167,7 @@ patches needed for this feature.
   generation-queue throttling of the embedding role
   (`throttle_when_generation_queue_above`), and long-run memory stability
   were not exercised under load.
-- **`VLLM_BACKEND=cuda` env var** set by the runner is not a real vLLM
-  variable (vLLM warns "Unknown environment variable"); harmless, but the
-  runner could drop it.
+- **`VLLM_BACKEND=cuda` warning**: vLLM reports the appliance selector as an
+  unknown vLLM environment variable. The warning is cosmetic, but the
+  variable itself is required until the adapter's backend selector is moved
+  under a Sovereign-specific name.
