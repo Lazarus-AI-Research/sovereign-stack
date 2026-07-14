@@ -6,8 +6,14 @@ raise nothing: they return (passed, details) and the runner handles crashes.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import io
 import json
 import math
+import struct
+import wave
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -175,18 +181,105 @@ def text_embedding(ctx: SuiteContext, params: dict) -> Result:
     return True, f"[{target}] dim={len(vector)}"
 
 
+def _png_data_uri(rgb: tuple[int, int, int], size: int = 64) -> str:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", binascii.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    scanline = b"\x00" + bytes(rgb) * size
+    pixels = scanline * size
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(pixels))
+        + chunk(b"IEND", b"")
+    )
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
+def _silent_wav_b64(seconds: float = 0.25, rate: int = 16000) -> str:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(b"\x00\x00" * int(rate * seconds))
+    return base64.b64encode(output.getvalue()).decode()
+
+
+def _validate_modality_vector(
+    ctx: SuiteContext, target: str, modality: str, response: httpx.Response
+) -> Result:
+    if response.status_code != 200:
+        return False, f"[{target}] {modality} status {response.status_code}: {response.text[:200]}"
+    vector = (response.json().get("data") or [{}])[0].get("embedding")
+    if not isinstance(vector, list) or not vector:
+        return False, f"[{target}] {modality} response has no embedding vector"
+    role = ctx.role("embedding")
+    if dims := role.get("dimensions"):
+        if len(vector) != dims:
+            return False, f"[{target}] {modality} dim {len(vector)} != manifest {dims}"
+    if role.get("normalization") == "l2":
+        norm = math.sqrt(sum(value * value for value in vector))
+        if abs(norm - 1.0) > 1e-2:
+            return False, f"[{target}] {modality} L2 norm {norm:.4f} != 1"
+    return True, f"[{target}] {modality} dim={len(vector)}"
+
+
 @register("image-embedding")
 def image_embedding(ctx: SuiteContext, params: dict) -> Result:
     if "image" not in (ctx.role("embedding").get("modalities") or []):
         return True, SKIPPED + "image modality not enabled"
-    return False, "image embedding check not implemented yet (M12)"
+    target = params.get("target", "runtime")
+    with ctx.client(target) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={
+                "model": ctx.embedding_alias(),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": _png_data_uri((220, 30, 30))},
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    return _validate_modality_vector(ctx, target, "image", response)
 
 
 @register("audio-embedding")
 def audio_embedding(ctx: SuiteContext, params: dict) -> Result:
     if "audio" not in (ctx.role("embedding").get("modalities") or []):
         return True, SKIPPED + "audio modality not enabled"
-    return False, "audio embedding check not implemented yet (M12)"
+    target = params.get("target", "runtime")
+    with ctx.client(target) as client:
+        response = client.post(
+            "/v1/embeddings",
+            json={
+                "model": ctx.embedding_alias(),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {"data": _silent_wav_b64(), "format": "wav"},
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    return _validate_modality_vector(ctx, target, "audio", response)
 
 
 @register("gateway-models")

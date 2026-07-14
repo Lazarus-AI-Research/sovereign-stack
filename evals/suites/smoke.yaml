@@ -22,6 +22,12 @@ checks:
   - type: text-embedding
     id: embedding-direct
     params: { target: runtime }
+  - type: image-embedding
+    id: image-embedding-direct
+    params: { target: runtime }
+  - type: audio-embedding
+    id: audio-embedding-direct
+    params: { target: runtime }
 
   - type: chat-completion
     id: chat-via-gateway
