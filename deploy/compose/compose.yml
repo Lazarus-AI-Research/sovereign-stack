@@ -81,6 +81,7 @@ services:
     volumes:
       - anythingllm_data:/app/server/storage
       - ./branding:/sovereign-branding:ro
+      - ./branding/lazarus_favicon.png:/app/server/public/favicon.png:ro
       # Lazarus streaming-spinner injection; regenerated per pinned
       # AnythingLLM version (§16 release gate).
       - ./config/workspace/_index.html:/app/server/public/_index.html:ro

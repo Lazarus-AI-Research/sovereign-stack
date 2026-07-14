@@ -76,9 +76,15 @@ func (c *Client) UploadLogo(ctx context.Context, path string) error {
 	return nil
 }
 
-// SetAppName sets the workspace's displayed product name.
+// SetAppName sets both the workspace's displayed product name and the
+// server-rendered browser title. AnythingLLM generates its production index
+// page dynamically, so changing only custom_app_name leaves provider branding
+// in the page metadata.
 func (c *Client) SetAppName(ctx context.Context, name string) error {
-	payload, _ := json.Marshal(map[string]string{"custom_app_name": name})
+	payload, _ := json.Marshal(map[string]string{
+		"custom_app_name": name,
+		"meta_page_title": name,
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.base+"/api/admin/system-preferences", bytes.NewReader(payload))
 	if err != nil {
