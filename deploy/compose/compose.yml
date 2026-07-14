@@ -168,8 +168,13 @@ services:
     image: arizephoenix/phoenix:${PHOENIX_VERSION}
     container_name: sovereign-phoenix
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      PHOENIX_SQL_DATABASE_URL: ${PHOENIX_SQL_DATABASE_URL:?set PHOENIX_SQL_DATABASE_URL to the persistent phoenix database}
     expose:
       - "6006"
       - "4317"
