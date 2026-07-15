@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+case "${1:-}" in
+  -s) echo "${SOVEREIGN_TEST_UNAME_S:-Darwin}" ;;
+  -m) echo "${SOVEREIGN_TEST_UNAME_M:-arm64}" ;;
+  *) echo "${SOVEREIGN_TEST_UNAME_S:-Darwin} sovereign-ci ${SOVEREIGN_TEST_UNAME_M:-arm64}" ;;
+esac

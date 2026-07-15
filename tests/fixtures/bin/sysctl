@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+if [[ "${1:-}" == -n && "${2:-}" == hw.memsize ]]; then
+  echo 68719476736
+  exit 0
+fi
+exit 1

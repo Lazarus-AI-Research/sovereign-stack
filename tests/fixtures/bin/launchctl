@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Prevent lifecycle tests from mutating the caller's real launchd domain.
+set -euo pipefail
+exit 0

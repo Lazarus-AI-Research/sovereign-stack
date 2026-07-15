@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+if [[ " $* " == *" --query-gpu=memory.total "* ]]; then
+  echo 24576
+  exit 0
+fi
+exit 2

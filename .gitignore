@@ -4,6 +4,8 @@ deploy/.env
 
 # Go
 bin/
+!tests/fixtures/bin/
+!tests/fixtures/bin/*
 *.test
 
 # Web frontend (built dist is tracked: go:embed needs it and the appliance

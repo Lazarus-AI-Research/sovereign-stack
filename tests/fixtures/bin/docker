@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Minimal Docker CLI fixture for non-mutating installer lifecycle tests.
+set -euo pipefail
+case "${1:-}" in
+  inspect)
+    [[ -n "${SOVEREIGN_TEST_DOCKER_OWNER:-}" ]] || exit 1
+    if [[ " $* " == *" --format "* ]]; then
+      printf '%s\n' "$SOVEREIGN_TEST_DOCKER_OWNER"
+    fi
+    exit 0
+    ;;
+  info)
+    [[ " $* " == *" --format "* ]] && printf '{"nvidia":{}}\n'
+    exit 0
+    ;;
+  pull|load) exit 0 ;;
+  save)
+    shift
+    [[ "${1:-}" == -o && -n "${2:-}" ]] || exit 2
+    : > "$2"
+    exit 0
+    ;;
+  image)
+    [[ "${2:-}" == inspect ]] || exit 2
+    if [[ " $* " == *" --format "* ]]; then
+      printf 'sha256:%064d %s\n' 1 1048576
+    fi
+    exit 0
+    ;;
+  compose)
+    case " ${*:-} " in
+      *" version "*|*" config "*|*" down "*) exit 0 ;;
+    esac
+    ;;
+esac
+echo "docker fixture: unsupported command: $*" >&2
+exit 2
