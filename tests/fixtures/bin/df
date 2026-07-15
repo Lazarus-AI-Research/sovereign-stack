@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Deterministic free-space response for non-mutating installer lifecycle tests.
+set -euo pipefail
+if [[ "${1:-}" == -Pk && $# -eq 2 ]]; then
+  cat <<'EOF'
+Filesystem 1024-blocks Used Available Capacity Mounted on
+fixture       100000000    1  99999999       1% /
+EOF
+  exit 0
+fi
+echo "df fixture: unsupported command: $*" >&2
+exit 2
