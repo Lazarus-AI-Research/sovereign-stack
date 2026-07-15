@@ -181,6 +181,27 @@ jobs:
           cosign sign-blob --yes --bundle "$ARCHIVE.sigstore.json" "$ARCHIVE"
           cosign sign-blob --yes --bundle release-manifest.sigstore.json release/manifest.json
           cp release/manifest.json "sovereign-release-manifest-$VERSION.json"
+      - name: Verify piped installer against signed release archive
+        run: |
+          set -euo pipefail
+          TEST_ROOT="$RUNNER_TEMP/sovereign-piped-install"
+          mkdir -p "$TEST_ROOT/user-home"
+          cat deploy/scripts/install.sh | env \
+            HOME="$TEST_ROOT/user-home" \
+            PATH="$GITHUB_WORKSPACE/tests/fixtures/bin:$PATH" \
+            SOVEREIGN_HOME="$TEST_ROOT/appliance" \
+            SOVEREIGN_BIN_DIR="$TEST_ROOT/bin" \
+            SOVEREIGN_RELEASE_URL="file://$GITHUB_WORKSPACE" \
+            SOVEREIGN_VERSION="${GITHUB_REF_NAME#v}" \
+            SOVEREIGN_INCLUDE_MODELS=0 \
+            SOVEREIGN_SKIP_START=1 \
+            SOVEREIGN_TEST_UNAME_S=Linux \
+            SOVEREIGN_TEST_UNAME_M=x86_64 \
+            SOVEREIGN_OS_RELEASE="$GITHUB_WORKSPACE/tests/fixtures/os-release" \
+            bash -s -- --profile cuda-x86_64
+          test "$(readlink "$TEST_ROOT/appliance/current")" = \
+            "$TEST_ROOT/appliance/releases/${GITHUB_REF_NAME#v}"
+          grep -qx "SOVEREIGN_VERSION=${GITHUB_REF_NAME#v}" "$TEST_ROOT/appliance/.env"
       - uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref_name, '-rc.') }}

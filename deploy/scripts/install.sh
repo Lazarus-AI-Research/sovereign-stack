@@ -3,7 +3,7 @@
 # starts the appliance; host drivers and container tooling remain prerequisites.
 set -Eeuo pipefail
 
-DEFAULT_VERSION="0.1.0-rc.1"
+DEFAULT_VERSION="0.1.0-rc.2"
 VERSION="${SOVEREIGN_VERSION:-$DEFAULT_VERSION}"
 VERSION="${VERSION#v}"
 SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
@@ -54,17 +54,23 @@ for command in curl tar openssl docker; do need "$command"; done
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
 docker info >/dev/null 2>&1 || die "Docker is not running"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_REPO="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd || true)"
+SCRIPT_DIR=""
+LOCAL_REPO=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LOCAL_REPO="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd || true)"
+fi
 SOURCE_DIR="${SOVEREIGN_SOURCE_DIR:-}"
-if [[ -z "$SOURCE_DIR" && -f "$LOCAL_REPO/VERSION" && -f "$LOCAL_REPO/deploy/compose/compose.yml" ]]; then
+if [[ -z "$SOURCE_DIR" && -n "$LOCAL_REPO" ]] &&
+   [[ -f "$LOCAL_REPO/VERSION" && -f "$LOCAL_REPO/deploy/compose/compose.yml" ]]; then
   SOURCE_DIR="$LOCAL_REPO"
 fi
 
 if [[ -z "$PROFILE" ]]; then
   DETECTOR=""
   [[ -n "$SOURCE_DIR" ]] && DETECTOR="$SOURCE_DIR/deploy/scripts/detect-hardware.sh"
-  [[ -z "$DETECTOR" && -x "$SCRIPT_DIR/detect-hardware.sh" ]] && DETECTOR="$SCRIPT_DIR/detect-hardware.sh"
+  [[ -z "$DETECTOR" && -n "$SCRIPT_DIR" && -x "$SCRIPT_DIR/detect-hardware.sh" ]] && \
+    DETECTOR="$SCRIPT_DIR/detect-hardware.sh"
   if [[ -n "$DETECTOR" ]]; then
     PROFILE="$("$DETECTOR")"
   elif [[ "$(uname -s)-$(uname -m)" == Darwin-arm64 ]]; then
@@ -166,8 +172,9 @@ elif [[ -z "$SOURCE_DIR" ]]; then
     --certificate-identity-regexp "^https://github.com/$REPOSITORY/.github/workflows/release.yml@refs/tags/v" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     "$TMP_ROOT/$ARCHIVE" >/dev/null
+  verify_archive_paths "$TMP_ROOT/$ARCHIVE"
   tar -xzf "$TMP_ROOT/$ARCHIVE" -C "$UNPACK"
-  SOURCE_DIR="$(find "$UNPACK" -maxdepth 3 -type f -path '*/deploy/compose/compose.yml' -print -quit | sed 's|/deploy/compose/compose.yml$||')"
+  SOURCE_DIR="$(find "$UNPACK" -maxdepth 4 -type f -path '*/deploy/compose/compose.yml' -print -quit | sed 's|/deploy/compose/compose.yml$||')"
 fi
 
 [[ -n "$SOURCE_DIR" && -f "$SOURCE_DIR/deploy/compose/compose.yml" ]] || die "release deployment files are missing"

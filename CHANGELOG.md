@@ -6,6 +6,13 @@ All notable changes to Sovereign Stack are documented in this file.
 
 - Release follow-up changes land here.
 
+## [0.1.0-rc.2] - 2026-07-15
+
+- Fixed the public piped bootstrap when `BASH_SOURCE[0]` is unavailable and
+  corrected discovery of the deployment root in the downloaded release archive.
+- Added archive path-safety verification and a release-time regression gate that
+  installs from the freshly signed archive through the documented piped command.
+
 ## [0.1.0-rc.1] - 2026-07-14
 
 - Added one-command, signed online installation for certified Apple Metal and

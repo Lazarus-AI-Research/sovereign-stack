@@ -5,10 +5,10 @@ Status as of 2026-07-15. Host: MacBook Pro `Mac16,5`, Apple M4 Max
 
 ## Release-candidate gate
 
-The `0.1.0-rc.1` one-command installer completed with the exact pinned Metal
-artifacts and installed the self-contained launchd host agent. The appliance
-bridge was rebuilt from the final Sovereign Runtime source and connected to the
-host agent through `host.docker.internal`.
+The `0.1.0-rc.1` version-pinned installer was exercised from a release checkout
+with the exact pinned Metal artifacts and installed the self-contained launchd
+host agent. The appliance bridge was rebuilt from the final Sovereign Runtime
+source and connected to the host agent through `host.docker.internal`.
 
 | Gate | Result |
 |---|---|
@@ -46,6 +46,10 @@ The validated immutable model revisions are:
   global launchd label when its scoped agent uninstaller was absent. Fallback
   removal is now restricted to the default install home, and lifecycle tests
   isolate both `HOME` and launchctl so they cannot alter a developer's agent.
+- Public `curl ... | bash` validation found that piped Bash has no
+  `BASH_SOURCE[0]` and that the signed archive's deployment file is four levels
+  below the extraction root. The `0.1.0-rc.2` bootstrap handles both cases and
+  release CI now installs from the freshly signed archive before publishing.
 
 ## Scope
 

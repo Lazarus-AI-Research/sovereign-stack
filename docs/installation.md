@@ -19,8 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 For a release candidate, pin both the bootstrap script and requested version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.1/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.1 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.2/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.2 bash
 ```
 
 The bootstrap downloads the versioned release archive, verifies its SHA-256

@@ -31,6 +31,19 @@ grep -Eq '^SOVEREIGN_HOST_UID=[0-9]+$' "$TEST_HOME/.env"
 grep -Eq '^SOVEREIGN_HOST_GID=[0-9]+$' "$TEST_HOME/.env"
 [[ "$(readlink "$TEST_HOME/current")" == "$TEST_HOME/releases/$VERSION" ]]
 
+# The documented bootstrap is piped into Bash, where BASH_SOURCE[0] is unset.
+# Exercise that exact shell form early without touching a real installation.
+PIPE_HOME="$TEST_HOME/piped-install"
+cat "$ROOT/deploy/scripts/install.sh" | env \
+  SOVEREIGN_HOME="$PIPE_HOME" \
+  SOVEREIGN_BIN_DIR="$PIPE_HOME/bin" \
+  SOVEREIGN_SOURCE_DIR="$ROOT" \
+  SOVEREIGN_INCLUDE_MODELS=0 \
+  SOVEREIGN_SKIP_START=1 \
+  bash -s -- --profile metal-arm64
+[[ "$(readlink "$PIPE_HOME/current")" == "$PIPE_HOME/releases/$VERSION" ]]
+grep -qx "SOVEREIGN_VERSION=$VERSION" "$PIPE_HOME/.env"
+
 # Linux exposes a generic VERSION variable through /etc/os-release. Exercise
 # the CUDA path and prove that it cannot replace the product release version.
 CUDA_HOME="$TEST_HOME/cuda-install"
