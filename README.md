@@ -75,9 +75,13 @@ The default install locations are:
 
 | Path | Purpose |
 | --- | --- |
-| `~/.sovereign` | Releases, configuration, credentials, models, databases, reports, backups, and appliance state |
+| `~/.sovereign` | Releases, configuration, credentials, models, reports, backups, and appliance state |
 | `~/.local/bin/sovereign` | Management CLI |
 | `~/.sovereign/credentials` | Generated Control URL, username, and password; owner-readable only |
+
+PostgreSQL and observability service data live in Docker-managed named volumes,
+not under `~/.sovereign`; the storage table in [initial configuration](#3-choose-logging-and-tracing)
+explains their backup and retention behavior.
 
 Use `--home` or `SOVEREIGN_HOME` for a different appliance directory, and
 `SOVEREIGN_BIN_DIR` for a different CLI directory. Full installer options and
@@ -110,16 +114,215 @@ Read the generated Control login when needed:
 cat "$HOME/.sovereign/credentials"
 ```
 
-In Control, use **Models** to inspect the active local routes or add a remote
-provider and encrypted credential. Use **Knowledge** to manage embedding
-profiles and versioned indexes, **Evaluations** to run and inspect gates, and
-**Resilience** for backups and offline bundles. In Workspace, create a
-workspace, add documents if desired, and chat through the stable
-`assistant-large` and platform-appropriate embedding aliases.
+The shipped local models and privacy-preserving observability defaults are
+ready to use without a provider key. The next section explains how to keep
+those defaults or deliberately change them before adding production data.
 
 The public ingress binds to host loopback by default. Remote access requires an
 operator-managed TLS reverse proxy and an explicit security review; do not
 expose internal container ports directly.
+
+## Initial configuration
+
+Complete this walkthrough after the installer smoke test passes and before
+adding production documents. The examples assume the default
+`~/.sovereign` appliance directory; replace it with the value passed to
+`--home` when using a custom location.
+
+The installed defaults are:
+
+| Setting | CUDA | Apple Silicon |
+| --- | --- | --- |
+| Generation route | Local `assistant-large` | Local `assistant-large` |
+| Embedding profile | `omni-default` (`embedding-omni-default`) | `text-compact` (`embedding-text-compact`) |
+| Phoenix tracing | Metadata only | Metadata only |
+| Prompt and response logging | Off | Off |
+| Full-content traces | Off | Off |
+
+These defaults need no cloud account and are the recommended starting point.
+
+### 1. Choose the generation model
+
+Open **Control > Models**. The active local model is served to Workspace using
+the stable `assistant-large` route, even if its underlying checkpoint changes.
+
+To use another local Hugging Face, ModelScope, or local-path model:
+
+1. Select **Add model**.
+2. Set **Role** to **Generation**, choose the source, and enter the model or
+   repository. Catalog models should include an immutable commit revision.
+3. Save it, select **Load**, wait for the runtime to become ready, and then
+   select **Test**.
+
+Loading a local generation model replaces the currently loaded generation
+role. Workspace continues to use `assistant-large`, so no Workspace setting
+needs to change. A gated Hugging Face repository also requires `HF_TOKEN` in
+`~/.sovereign/.env`; keep that file owner-readable with mode `0600`.
+
+To use a cloud or OpenAI-compatible remote model:
+
+1. In **Control > Access**, save the provider credential. The secret is
+   encrypted and is not returned after submission.
+2. In **Control > Models**, add a **Generation** model. Give it a short
+   **Product ID**, such as `team-coding-model`; select the credential and set
+   the remote base URL when applicable.
+3. Select **Load** to regenerate and restart the private gateway, then select
+   **Test**.
+4. Set Workspace's generation preference to that Product ID in
+   `~/.sovereign/.env`:
+
+   ```dotenv
+   GENERIC_OPEN_AI_MODEL_PREF=team-coding-model
+   ```
+
+5. Apply and verify the change:
+
+   ```bash
+   chmod 600 "$HOME/.sovereign/.env"
+   sovereign up
+   sovereign smoke
+   ```
+
+Keep `GENERIC_OPEN_AI_MODEL_PREF=assistant-large` for a local model. Remote and
+cloud routes send requests outside the appliance and may incur provider costs;
+review the provider's data policy first. Use **Control > Access > Gateway
+keys** to issue separate client keys with allowed-model, spend, RPM, and TPM
+limits.
+
+### 2. Choose the embedding model
+
+Embedding identity includes the checkpoint, pooling, normalization, prefixes,
+preprocessing, and vector dimensions. It cannot be changed underneath an
+existing index.
+
+Open **Control > Knowledge** and select:
+
+| Profile | Hosts | Use it for | Workspace settings |
+| --- | --- | --- | --- |
+| `omni-default` | CUDA | Text, image, and audio retrieval | `EMBEDDING_MODEL_PREF=embedding-omni-default`; query and passage prefixes empty |
+| `text-compact` | CUDA or Apple Silicon | Smaller text-only retrieval | `EMBEDDING_MODEL_PREF=embedding-text-compact`; query prefix `search_query: `; passage prefix `search_document: ` |
+
+Then:
+
+1. Select **Validate** for the desired profile, followed by **Activate**.
+2. Make the matching Workspace settings explicit in
+   `~/.sovereign/.env`. For example, `text-compact` requires:
+
+   ```dotenv
+   EMBEDDING_MODEL_PREF=embedding-text-compact
+   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX="search_query: "
+   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX="search_document: "
+   ```
+
+   For `omni-default`, use:
+
+   ```dotenv
+   EMBEDDING_MODEL_PREF=embedding-omni-default
+   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX=""
+   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX=""
+   ```
+
+3. Run `sovereign up` to apply the Workspace preference.
+4. Under **Workspace indexes**, rebuild every affected Workspace with the
+   selected profile. The old index remains active until the replacement has
+   been built and validated, then Control switches it atomically.
+5. Run `sovereign smoke embedding` and `sovereign smoke retrieval`.
+
+Do not ingest new documents between changing the Workspace preference and
+completing the corresponding index rebuild.
+
+### 3. Choose logging and tracing
+
+The recommended v0.1 privacy posture is metadata-only tracing with all content
+capture disabled. Verify it under **Control > Settings > Privacy posture**:
+
+```yaml
+# ~/.sovereign/config/feature-flags.yaml
+phoenix:
+  enabled: true
+tracing:
+  enabled: true
+  metadata_only: true
+  full_trace: false
+  prompt_logging: false
+  response_logging: false
+prompt_logging:
+  enabled: false
+```
+
+Do **not** enable full traces for v0.1. The Settings view is intentionally
+read-only for these controls, and v0.1 does not provide the complete redaction,
+scope, retention, consent, and runtime enforcement needed for prompt or
+response capture. `full_trace`, `prompt_logging`, and `response_logging` must
+remain `false` for the supported configuration.
+
+v0.1 also does not expose a supported global `debug`, `info`, `warning`, or
+`error` selector. Services use their shipped levels; the runtime currently
+logs at `INFO`. `structured_logs: true` is retained in
+`~/.sovereign/config/runtime.yaml`, but it is not a product-wide verbosity
+control. Use `sovereign logs` to select services and time windows:
+
+```bash
+sovereign logs --tail 200 sovereign-runtime
+sovereign logs --since 30m sovereign-gateway
+sovereign logs -f sovereign-control
+```
+
+Logging and observability data is stored as follows:
+
+| Data | Storage and retention |
+| --- | --- |
+| Container stdout/stderr | Docker's host logging driver; inspect with `sovereign logs`. Rotation, quotas, and physical location are controlled by the host Docker configuration and are not included in Sovereign backups. |
+| Restricted Docker actions | Append-only `~/.sovereign/logs/docker-proxy/docker-actions.jsonl`; retain or archive it according to local audit policy. It is not included in Sovereign backups. |
+| Phoenix traces | The appliance PostgreSQL `phoenix` database in a Docker named volume; included in `sovereign backup`. With the supported defaults, traces must contain metadata rather than prompt or response content. |
+| Loki | Docker named volume `loki_data`, with a default `168h` retention setting. v0.1 does not automatically ship all container stdout/stderr to Loki, so only data explicitly sent to Loki appears there. |
+| Prometheus and Grafana | Docker named volumes `prometheus_data` and `grafana_data`; operational state is local and is not part of the normal product backup. |
+| Evaluation reports | `~/.sovereign/reports`; review them for customer metadata before exporting. |
+
+Configure Docker log rotation at the host level before sustained production
+use. Docker manages the physical location of named volumes; changing
+`SOVEREIGN_HOME` does not move them.
+
+### 4. Review the other common settings
+
+- **HTTP port:** The default is `8880`. Set `SOVEREIGN_HTTP_PORT` when running
+  the installer, or change `HTTP_PORT` in `~/.sovereign/.env` and run
+  `sovereign up`. Keep `SOVEREIGN_BIND_ADDRESS=127.0.0.1`; use an
+  operator-managed TLS reverse proxy for remote access.
+- **Context limit:** Workspace defaults to
+  `GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT=2048`. Do not set it above the active
+  route's supported context length. Runtime model length, memory allocation,
+  and concurrency are hardware-specific advanced settings in
+  `~/.sovereign/config/runtime.yaml`; changing them requires **Control >
+  Overview > Restart runtime** and the full evaluation gate.
+- **Provider access:** Store provider secrets in **Control > Access**, not in
+  model registry files. Issue scoped gateway keys rather than sharing the
+  appliance master key.
+- **Branding:** Set the product name, company name, and colors under
+  **Control > Settings > Branding**.
+- **Backups:** Run `sovereign backup` after initial configuration and copy the
+  verified backup off the appliance. Backups exclude `.env`, generated login
+  credentials, encryption keys, gateway secret configuration, and model
+  caches. Encrypted provider credential records are in the database but need
+  the excluded vault key, so preserve required secrets separately using an
+  approved process.
+- **Offline use:** After models are loaded and tested, create a same-platform
+  offline bundle with `sovereign bundle create --include-models`.
+
+Finish initial configuration with:
+
+```bash
+sovereign validate
+sovereign up
+sovereign smoke full
+sovereign status
+sovereign backup
+```
+
+Files under `~/.sovereign/config` are managed by Control and may be rewritten
+when models or embedding profiles change. Prefer Control for supported changes,
+and keep a record of deliberate `.env` overrides: the installer regenerates
+that file, so non-secret preferences must be checked after an upgrade.
 
 ## CLI usage
 
