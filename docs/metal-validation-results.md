@@ -50,6 +50,10 @@ The validated immutable model revisions are:
   `BASH_SOURCE[0]` and that the signed archive's deployment file is four levels
   below the extraction root. The `0.1.0-rc.2` bootstrap handles both cases and
   release CI now installs from the freshly signed archive before publishing.
+- Consumer-side `0.1.0-rc.2` validation found that the generated Compose
+  environment still used mutable version tags even though the signed manifest
+  recorded exact digests. The `0.1.0-rc.3` release generates and consumes a
+  manifest-derived image lock and verifies the resolved Compose references.
 
 ## Scope
 

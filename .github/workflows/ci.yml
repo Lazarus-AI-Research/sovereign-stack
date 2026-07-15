@@ -54,7 +54,8 @@ jobs:
         run: |
           bash -n deploy/scripts/*.sh deploy/scripts/sovereign
           node --check workspace/sovereign/preload.js
-          chmod +x tests/fixtures/bin/* tests/scripts/install-lifecycle.sh
+          chmod +x tests/fixtures/bin/* tests/scripts/*.sh
+          tests/scripts/release-artifacts.sh
           tests/scripts/install-lifecycle.sh
       - name: Control UI
         run: npm ci --prefix control/web --no-fund --no-audit && npm run build --prefix control/web

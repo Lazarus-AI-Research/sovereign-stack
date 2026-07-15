@@ -6,6 +6,13 @@ All notable changes to Sovereign Stack are documented in this file.
 
 - Release follow-up changes land here.
 
+## [0.1.0-rc.3] - 2026-07-15
+
+- Made installed first-party image references consume the exact digests from
+  the signed release manifest, including both certified runtime overlays.
+- Added manifest-to-image-lock validation and release-time assertions over the
+  fully resolved Compose configuration.
+
 ## [0.1.0-rc.2] - 2026-07-15
 
 - Fixed the public piped bootstrap when `BASH_SOURCE[0]` is unavailable and

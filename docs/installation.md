@@ -19,13 +19,14 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 For a release candidate, pin both the bootstrap script and requested version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.2/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.2 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash
 ```
 
 The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
-owner-only credentials, pulls pinned images, starts the stack, waits for both
+owner-only credentials, pulls digest-pinned images from the signed release
+manifest, starts the stack, waits for both
 runtime roles, and runs the smoke suite. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.

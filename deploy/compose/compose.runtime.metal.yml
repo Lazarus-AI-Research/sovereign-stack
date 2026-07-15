@@ -3,7 +3,7 @@
 # llama.cpp on Metal); the container keeps the contract unchanged.
 services:
   sovereign-runtime:
-    image: ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-${SOVEREIGN_VERSION}
+    image: ${SOVEREIGN_RUNTIME_IMAGE}
     volumes:
       - ./config/runtime.metal.yaml:/runtime-config/runtime.yaml:ro
       - ./models:/models

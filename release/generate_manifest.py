@@ -18,6 +18,14 @@ from pathlib import Path
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 REGISTRY = "ghcr.io/lazarus-ai-research"
+IMAGE_LOCK_KEYS = [
+    ("SOVEREIGN_CONTROL_IMAGE", "sovereign-control"),
+    ("SOVEREIGN_DOCKER_PROXY_IMAGE", "sovereign-docker-proxy"),
+    ("SOVEREIGN_EVALS_IMAGE", "sovereign-evals"),
+    ("SOVEREIGN_WORKSPACE_IMAGE", "sovereign-workspace"),
+    ("SOVEREIGN_RUNTIME_CUDA_IMAGE", "sovereign-runtime-cuda"),
+    ("SOVEREIGN_RUNTIME_METAL_IMAGE", "sovereign-runtime-metal"),
+]
 
 
 def read_digest(path: Path) -> str:
@@ -33,6 +41,7 @@ def main() -> None:
     parser.add_argument("--digest-dir", type=Path, required=True)
     parser.add_argument("--stack-commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--image-lock-output", type=Path)
     args = parser.parse_args()
 
     source = json.loads(args.source.read_text(encoding="utf-8"))
@@ -92,6 +101,14 @@ def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    if args.image_lock_output:
+        by_name = {image["name"]: image for image in images if image["first_party"]}
+        lines = [
+            f"{key}={by_name[name]['reference']}@{by_name[name]['digest']}"
+            for key, name in IMAGE_LOCK_KEYS
+        ]
+        args.image_lock_output.parent.mkdir(parents=True, exist_ok=True)
+        args.image_lock_output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

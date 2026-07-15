@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
 PROFILE="${SOVEREIGN_PROFILE:-}"
-VERSION="${SOVEREIGN_VERSION:-0.1.0-rc.2}"
+VERSION="${SOVEREIGN_VERSION:-0.1.0-rc.3}"
 RELEASE_ROOT="${SOVEREIGN_RELEASE_ROOT:-$SOVEREIGN_HOME/current}"
 
 while [[ $# -gt 0 ]]; do
@@ -62,6 +62,10 @@ if [[ ! -f "$VAULT_KEY_FILE" ]]; then
 fi
 chmod 600 "$VAULT_KEY_FILE"
 
+CONTROL_IMAGE="ghcr.io/lazarus-ai-research/sovereign-control:$VERSION"
+DOCKER_PROXY_IMAGE="ghcr.io/lazarus-ai-research/sovereign-docker-proxy:$VERSION"
+EVALS_IMAGE="ghcr.io/lazarus-ai-research/sovereign-evals:$VERSION"
+WORKSPACE_IMAGE="ghcr.io/lazarus-ai-research/sovereign-workspace:$VERSION"
 if [[ "$PROFILE" == "metal-arm64" ]]; then
   EMBEDDING_ALIAS="embedding-text-compact"
   PASSAGE_PREFIX="search_document: "
@@ -72,6 +76,38 @@ else
   PASSAGE_PREFIX=""
   QUERY_PREFIX=""
   RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-$VERSION"
+fi
+
+MANIFEST_FILE="$RELEASE_ROOT/release/manifest.json"
+IMAGE_LOCK_FILE="$RELEASE_ROOT/release/images.env"
+locked_image() {
+  local key="$1" expected="$2" value digest
+  value="$(sed -n "s/^${key}=//p" "$IMAGE_LOCK_FILE" | tail -n 1)"
+  [[ "$value" == "$expected@sha256:"* ]] || {
+    echo "error: $key is missing or inconsistent with release $VERSION" >&2
+    return 1
+  }
+  digest="${value##*@sha256:}"
+  [[ ${#digest} -eq 64 && "$digest" != *[!0-9a-f]* ]] || {
+    echo "error: $key has an invalid digest" >&2
+    return 1
+  }
+  printf '%s' "$value"
+}
+if [[ -f "$MANIFEST_FILE" ]]; then
+  [[ -f "$IMAGE_LOCK_FILE" ]] || {
+    echo "error: signed release manifest has no image lock" >&2
+    exit 1
+  }
+  CONTROL_IMAGE="$(locked_image SOVEREIGN_CONTROL_IMAGE "$CONTROL_IMAGE")"
+  DOCKER_PROXY_IMAGE="$(locked_image SOVEREIGN_DOCKER_PROXY_IMAGE "$DOCKER_PROXY_IMAGE")"
+  EVALS_IMAGE="$(locked_image SOVEREIGN_EVALS_IMAGE "$EVALS_IMAGE")"
+  WORKSPACE_IMAGE="$(locked_image SOVEREIGN_WORKSPACE_IMAGE "$WORKSPACE_IMAGE")"
+  if [[ "$PROFILE" == "metal-arm64" ]]; then
+    RUNTIME_IMAGE="$(locked_image SOVEREIGN_RUNTIME_METAL_IMAGE "$RUNTIME_IMAGE")"
+  else
+    RUNTIME_IMAGE="$(locked_image SOVEREIGN_RUNTIME_CUDA_IMAGE "$RUNTIME_IMAGE")"
+  fi
 fi
 
 TMP="$ENV_FILE.tmp.$$"
@@ -85,10 +121,10 @@ SOVEREIGN_HOST_UID=$(id -u)
 SOVEREIGN_HOST_GID=$(id -g)
 HTTP_PORT=${SOVEREIGN_HTTP_PORT:-8880}
 
-SOVEREIGN_CONTROL_IMAGE=ghcr.io/lazarus-ai-research/sovereign-control:$VERSION
-SOVEREIGN_DOCKER_PROXY_IMAGE=ghcr.io/lazarus-ai-research/sovereign-docker-proxy:$VERSION
-SOVEREIGN_EVALS_IMAGE=ghcr.io/lazarus-ai-research/sovereign-evals:$VERSION
-SOVEREIGN_WORKSPACE_IMAGE=ghcr.io/lazarus-ai-research/sovereign-workspace:$VERSION
+SOVEREIGN_CONTROL_IMAGE=$CONTROL_IMAGE
+SOVEREIGN_DOCKER_PROXY_IMAGE=$DOCKER_PROXY_IMAGE
+SOVEREIGN_EVALS_IMAGE=$EVALS_IMAGE
+SOVEREIGN_WORKSPACE_IMAGE=$WORKSPACE_IMAGE
 SOVEREIGN_RUNTIME_IMAGE=$RUNTIME_IMAGE
 
 CADDY_IMAGE=caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d

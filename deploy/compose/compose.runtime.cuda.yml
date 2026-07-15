@@ -1,7 +1,7 @@
 # Runtime overlay: NVIDIA CUDA x86_64 (design.md §8.2).
 services:
   sovereign-runtime:
-    image: ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-${SOVEREIGN_VERSION}
+    image: ${SOVEREIGN_RUNTIME_IMAGE}
     gpus: all
     ipc: host
     environment:

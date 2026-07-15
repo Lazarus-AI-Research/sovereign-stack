@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "version": "0.1.0-rc.2",
-  "runtime_commit": "08b439594dd038f00fd81e6f199cd7bd088d6c88",
+  "version": "0.1.0-rc.3",
+  "runtime_commit": "a36f965d43f82876d91bb4e5cc65fa46e0b95fbf",
   "supported_profiles": ["cuda-x86_64", "metal-arm64"],
   "third_party_images": [
     {"name": "caddy", "reference": "caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d"},

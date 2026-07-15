@@ -28,7 +28,8 @@ test-contracts: ## Validate schemas and checked-in configuration contracts
 
 test-scripts: ## Parse every shipped shell entrypoint
 	bash -n deploy/scripts/*.sh deploy/scripts/sovereign
-	chmod +x tests/fixtures/bin/* tests/scripts/install-lifecycle.sh
+	chmod +x tests/fixtures/bin/* tests/scripts/*.sh
+	tests/scripts/release-artifacts.sh
 	tests/scripts/install-lifecycle.sh
 
 validate: test web compose-validate ## Run the local release contract gates

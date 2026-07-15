@@ -34,6 +34,8 @@ jobs:
       - name: Shell and repository checks
         run: |
           bash -n deploy/scripts/*.sh deploy/scripts/sovereign
+          chmod +x tests/scripts/*.sh
+          tests/scripts/release-artifacts.sh
           git diff --check
       - name: Go services
         run: |
@@ -150,7 +152,8 @@ jobs:
           python3 release/generate_manifest.py \
             --digest-dir digests \
             --stack-commit "$GITHUB_SHA" \
-            --output release/manifest.json
+            --output release/manifest.json \
+            --image-lock-output release/images.env
           python3 -m pip install jsonschema PyYAML
           python3 release/validate_contracts.py
           test "$(python3 -c 'import json; print(json.load(open("release/manifest.json"))["version"])')" = "$VERSION"
@@ -202,6 +205,22 @@ jobs:
           test "$(readlink "$TEST_ROOT/appliance/current")" = \
             "$TEST_ROOT/appliance/releases/${GITHUB_REF_NAME#v}"
           grep -qx "SOVEREIGN_VERSION=${GITHUB_REF_NAME#v}" "$TEST_ROOT/appliance/.env"
+          for key in SOVEREIGN_CONTROL_IMAGE SOVEREIGN_DOCKER_PROXY_IMAGE \
+            SOVEREIGN_EVALS_IMAGE SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE; do
+            grep -Eq "^$key=ghcr.io/lazarus-ai-research/[^@]+@sha256:[0-9a-f]{64}$" \
+              "$TEST_ROOT/appliance/.env"
+          done
+          docker compose \
+            --project-directory "$TEST_ROOT/appliance" \
+            --env-file "$TEST_ROOT/appliance/.env" \
+            -f "$TEST_ROOT/appliance/current/deploy/compose/compose.yml" \
+            -f "$TEST_ROOT/appliance/current/deploy/compose/compose.runtime.cuda.yml" \
+            --profile tools config > "$TEST_ROOT/compose.yml"
+          for image in sovereign-control sovereign-docker-proxy sovereign-evals \
+            sovereign-workspace sovereign-runtime; do
+            grep -Eq "image: ghcr.io/lazarus-ai-research/$image:[^ ]+@sha256:[0-9a-f]{64}$" \
+              "$TEST_ROOT/compose.yml"
+          done
       - uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ contains(github.ref_name, '-rc.') }}
