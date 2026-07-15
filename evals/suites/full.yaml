@@ -1,4 +1,24 @@
 # Validated against schemas/eval-suite.schema.json.
 name: full
-description: Full benchmark: prompt/output/concurrency sweeps, mixed-role pressure
-checks: []  # TODO (design.md §19)
+description: "Full benchmark: prompt/output/concurrency sweeps and mixed-role pressure"
+checks:
+  - type: runtime-readiness
+  - type: benchmark-generation
+    id: generation-short-serial
+    params: {target: gateway, requests: 8, concurrency: 1, max_tokens: 32}
+  - type: benchmark-generation
+    id: generation-medium-concurrent
+    params: {target: gateway, requests: 12, concurrency: 2, max_tokens: 128}
+  - type: benchmark-generation
+    id: generation-long
+    params: {target: gateway, requests: 4, concurrency: 1, max_tokens: 512}
+  - type: benchmark-embedding
+    id: embedding-small-batches
+    params: {target: gateway, batch_size: 8, batches: 10}
+  - type: benchmark-embedding
+    id: embedding-large-batches
+    params: {target: gateway, batch_size: 32, batches: 5}
+  - type: benchmark-mixed
+    id: mixed-sustained
+    params: {target: gateway, generation_requests: 8, embedding_batches: 8}
+  - type: retrieval-quality

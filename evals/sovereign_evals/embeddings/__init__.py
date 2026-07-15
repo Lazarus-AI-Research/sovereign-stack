@@ -1,1 +1,1 @@
-"""Sovereign Evals: embeddings (scaffold)."""
+"""Text and multimodal embedding evaluation helpers."""

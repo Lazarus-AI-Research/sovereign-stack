@@ -1,183 +1,410 @@
-# Sovereign Control API (design.md §18). Covers the implemented surface;
-# §18 remains the authoritative endpoint list for groups not yet implemented
-# (models, embedding-profiles, indexes, gateway admin, workspace, evals,
-# backups, bundles).
 openapi: 3.1.0
-
 info:
   title: Sovereign Control API
   version: 0.1.0
-  description: >
-    Customer-facing control plane for Lazarus Sovereign Stack.
-
+  description: Authenticated local control plane for SovereignStack.
 servers:
   - url: /api/control/v1
+security:
+  - sessionCookie: []
+  - bearerAuth: []
 
 paths:
   /health:
     get:
-      summary: Control-plane health
       operationId: getHealth
-      responses:
-        "200":
-          description: Sovereign Control is healthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status: { type: string }
-                  version: { type: string }
-
+      summary: Control-plane liveness
+      security: []
+      responses: {"200": {$ref: "#/components/responses/Document"}}
   /version:
     get:
-      summary: Control-plane version
       operationId: getVersion
+      summary: Product version
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /auth/login:
+    post:
+      operationId: login
+      summary: Create an administrator session
+      security: []
+      requestBody: {$ref: "#/components/requestBodies/Document"}
       responses:
-        "200":
-          description: Version information
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  version: { type: string }
-
+        "200": {$ref: "#/components/responses/Document"}
+        "401": {$ref: "#/components/responses/Error"}
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Destroy the current session
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /auth/me:
+    get:
+      operationId: getSession
+      summary: Inspect the current session
+      responses: {"200": {$ref: "#/components/responses/Document"}, "401": {$ref: "#/components/responses/Error"}}
   /status:
     get:
-      summary: Aggregate product status (runtime, gateway, proxy, services)
       operationId: getStatus
-      responses:
-        "200":
-          description: Aggregated status of all Sovereign services
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  control: { type: object }
-                  runtime:
-                    type: object
-                    properties:
-                      reachable: { type: boolean }
-                      state: { type: string }
-                      ready: { type: boolean }
-                      required_roles:
-                        type: object
-                        additionalProperties: { type: boolean }
-                  gateway:
-                    type: object
-                    properties:
-                      healthy: { type: boolean }
-                  docker_proxy: { type: object }
-                  services:
-                    type: object
-                    additionalProperties: { type: string }
-
+      summary: Aggregate appliance status
+      responses: {"200": {$ref: "#/components/responses/Document"}}
   /hardware:
     get:
-      summary: Current hardware detections
       operationId: getHardware
-      responses:
-        "200":
-          $ref: "#/components/responses/Detections"
-
+      summary: Detect available accelerator hardware
+      responses: {"200": {$ref: "#/components/responses/Document"}}
   /hardware/detect:
     post:
-      summary: Run hardware detection
       operationId: detectHardware
-      responses:
-        "200":
-          $ref: "#/components/responses/Detections"
-
+      summary: Re-run hardware detection
+      responses: {"200": {$ref: "#/components/responses/Document"}}
   /profiles:
     get:
-      summary: Known runtime profiles with recommendations
-      operationId: getProfiles
-      responses:
-        "200":
-          description: Profiles and whether detection recommends them
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  profiles:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        profile: { type: string }
-                        recommended: { type: boolean }
+      operationId: listHardwareProfiles
+      summary: List known hardware profiles
+      responses: {"200": {$ref: "#/components/responses/Document"}}
 
   /runtime/status:
     get:
-      summary: Runtime aggregate health (passthrough of GET /health)
       operationId: getRuntimeStatus
-      responses:
-        "200":
-          description: Runtime health document (see docs/runtime-contract.md)
-          content:
-            application/json:
-              schema: { type: object }
-        "502": { $ref: "#/components/responses/Unreachable" }
-
+      summary: Runtime health document
+      responses: {"200": {$ref: "#/components/responses/Document"}, "502": {$ref: "#/components/responses/Error"}}
   /runtime/manifest:
     get:
-      summary: Runtime manifest (validates against runtime-manifest.schema.json)
       operationId: getRuntimeManifest
-      responses:
-        "200":
-          description: Runtime manifest
-          content:
-            application/json:
-              schema: { type: object }
-        "502": { $ref: "#/components/responses/Unreachable" }
-
+      summary: Observed runtime manifest
+      responses: {"200": {$ref: "#/components/responses/Document"}, "502": {$ref: "#/components/responses/Error"}}
   /runtime/errors:
     get:
-      summary: Runtime error records
       operationId: getRuntimeErrors
-      responses:
-        "200":
-          description: Structured runtime errors
-          content:
-            application/json:
-              schema: { type: object }
-        "502": { $ref: "#/components/responses/Unreachable" }
-
+      summary: Structured runtime errors
+      responses: {"200": {$ref: "#/components/responses/Document"}}
   /runtime/restart:
     post:
-      summary: Restart the runtime via the restricted Docker proxy
       operationId: restartRuntime
+      summary: Restart runtime through the restricted proxy
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+
+  /models:
+    get:
+      operationId: listModels
+      summary: List registered models and loaded state
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createModel
+      summary: Add a local, catalog, remote, or cloud model
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}, "400": {$ref: "#/components/responses/Error"}}
+  /models/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    patch:
+      operationId: updateModel
+      summary: Update mutable model metadata
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    delete:
+      operationId: deleteModel
+      summary: Delete a model registry entry
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /models/{id}/load:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: loadModel
+      summary: Load a local model or apply a gateway route
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /models/{id}/smoke-test:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: smokeTestModel
+      summary: Run the smoke suite after a model change
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+
+  /provider-credentials:
+    get:
+      operationId: listProviderCredentials
+      summary: List non-secret credential metadata
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createProviderCredential
+      summary: Encrypt and save a provider credential
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}}
+  /provider-credentials/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    put:
+      operationId: replaceProviderCredential
+      summary: Rotate a provider credential
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}}
+    delete:
+      operationId: deleteProviderCredential
+      summary: Delete a provider credential
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+
+  /embedding-profiles:
+    get:
+      operationId: listEmbeddingProfiles
+      summary: List embedding profiles
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createEmbeddingProfile
+      summary: Create an embedding profile
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}}
+  /embedding-profiles/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: getEmbeddingProfile
+      summary: Get an embedding profile
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    patch:
+      operationId: updateEmbeddingProfile
+      summary: Replace an embedding profile
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    delete:
+      operationId: deleteEmbeddingProfile
+      summary: Delete an embedding profile
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /embedding-profiles/{id}/validate:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: validateEmbeddingProfile
+      summary: Compare a profile with the loaded embedding role
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /embedding-profiles/{id}/activate:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: activateEmbeddingProfile
+      summary: Load an embedding profile
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List workspace provider namespaces available for indexing
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /indexes:
+    get:
+      operationId: listIndexes
+      summary: List immutable index versions
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createIndex
+      summary: Create an index version record
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}}
+  /indexes/rebuild:
+    post:
+      operationId: createAndRebuildIndex
+      summary: Create and rebuild the first index for a workspace
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /indexes/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: getIndex
+      summary: Get an index version
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    delete:
+      operationId: deleteIndex
+      summary: Delete an inactive index and its vectors
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /indexes/{id}/rebuild:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: rebuildIndex
+      summary: Build a replacement from an existing index namespace
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /indexes/{id}/activate:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: activateIndex
+      summary: Atomically activate a validated index
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+
+  /evals/suite:
+    post:
+      operationId: runEvaluationSuite
+      summary: Run an allowlisted evaluation suite
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /evals/results:
+    get:
+      operationId: listEvaluationResults
+      summary: List persisted evaluation reports
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /evals/results/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: getEvaluationResult
+      summary: Read an evaluation JSON report
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+
+  /backups:
+    get:
+      operationId: listBackups
+      summary: List completed backups
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createBackup
+      summary: Create a configuration and database backup
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /backups/{id}/verify:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: verifyBackup
+      summary: Recompute every backup checksum
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /backups/{id}/restore:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: restoreBackup
+      summary: Restore a verified backup
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+
+  /bundles:
+    get:
+      operationId: listOfflineBundles
+      summary: List completed same-platform offline bundles
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createOfflineBundle
+      summary: Export pinned images and optional local model caches
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /bundles/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: getOfflineBundle
+      summary: Read an offline bundle manifest
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /bundles/{id}/download:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: downloadOfflineBundle
+      summary: Download an offline bundle archive
       responses:
-        "202":
-          description: Restart accepted
-        "502": { $ref: "#/components/responses/Unreachable" }
+        "200":
+          description: gzip-compressed bundle
+          content: {application/gzip: {schema: {type: string, format: binary}}}
+
+  /gateway/status:
+    get:
+      operationId: getGatewayStatus
+      summary: Probe the private gateway
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/models:
+    get:
+      operationId: listGatewayModels
+      summary: List live gateway aliases
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/keys:
+    get:
+      operationId: listGatewayKeys
+      summary: List virtual-key metadata
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createGatewayKey
+      summary: Issue a scoped virtual key
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}}
+  /gateway/keys/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    delete:
+      operationId: deleteGatewayKey
+      summary: Revoke a virtual key
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/usage:
+    get:
+      operationId: getGatewayUsage
+      summary: Get aggregate gateway spend
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/budgets:
+    get:
+      operationId: listGatewayBudgets
+      summary: List key budgets and quotas
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/budgets/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    patch:
+      operationId: updateGatewayBudget
+      summary: Update a virtual-key budget or quota
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/config/regenerate:
+    post:
+      operationId: regenerateGatewayConfig
+      summary: Regenerate routes from product registries
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /gateway/reload:
+    post:
+      operationId: reloadGateway
+      summary: Restart the gateway with generated configuration
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+
+  /workspace/status:
+    get:
+      operationId: getWorkspaceStatus
+      summary: Probe the workspace provider
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /workspace/branding/apply:
+    post:
+      operationId: applyWorkspaceBranding
+      summary: Apply product branding to the workspace
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /branding:
+    get:
+      operationId: getBranding
+      summary: Get customer branding
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    put:
+      operationId: updateBranding
+      summary: Replace customer branding
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /features:
+    get:
+      operationId: getFeatureFlags
+      summary: Get product and privacy flags
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    put:
+      operationId: updateFeatureFlags
+      summary: Replace validated feature flags
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"200": {$ref: "#/components/responses/Document"}, "422": {$ref: "#/components/responses/Error"}}
+  /jobs/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: getJob
+      summary: Poll a long-running operation
+      responses: {"200": {$ref: "#/components/responses/Document"}, "404": {$ref: "#/components/responses/Error"}}
 
 components:
+  securitySchemes:
+    sessionCookie: {type: apiKey, in: cookie, name: sovereign_session}
+    bearerAuth: {type: http, scheme: bearer}
+  parameters:
+    ID: {name: id, in: path, required: true, schema: {type: string}}
+  requestBodies:
+    Document:
+      required: true
+      content: {application/json: {schema: {type: object, additionalProperties: true}}}
   responses:
-    Detections:
-      description: Profile detections, most preferred first
+    Document:
+      description: JSON response
+      content: {application/json: {schema: {type: object, additionalProperties: true}}}
+    Accepted:
+      description: Long-running operation accepted
       content:
         application/json:
           schema:
             type: object
-            properties:
-              detections:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    profile: { type: string }
-                    reasons:
-                      type: array
-                      items: { type: string }
-    Unreachable:
-      description: A dependent Sovereign service is unreachable
+            properties: {job_id: {type: string, format: uuid}}
+            additionalProperties: true
+    Error:
+      description: Error response
       content:
         application/json:
           schema:
             type: object
-            properties:
-              error: { type: string }
+            required: [error]
+            properties: {error: {type: string}}

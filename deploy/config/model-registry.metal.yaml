@@ -1,0 +1,22 @@
+# Metal model defaults. Installed as model-registry.yaml on Apple Silicon.
+models:
+  - id: assistant-large
+    role: generation
+    source: local
+    model: google/gemma-4-E2B-it-qat-q4_0-gguf
+    revision: 69536a21d70340464240401ba38223d805f6a709
+    artifact: gemma-4-E2B_q4_0-it.gguf
+    sha256: 3646b4c147cd235a44d91df1546d3b7d8e29b547dbe4e1f80856419aa455e6fd
+    capabilities: [chat, completions]
+    compatible_profiles: [metal-arm64]
+    validation_state: validated
+  - id: embedding-text-compact
+    role: embedding
+    source: local
+    model: nomic-ai/nomic-embed-text-v1.5-GGUF
+    revision: 0188c9bf409793f810680a5a431e7b899c46104c
+    artifact: nomic-embed-text-v1.5.Q8_0.gguf
+    sha256: 3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7
+    capabilities: [text]
+    compatible_profiles: [metal-arm64]
+    validation_state: validated

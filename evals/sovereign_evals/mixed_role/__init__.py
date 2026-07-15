@@ -1,1 +1,1 @@
-"""Sovereign Evals: mixed_role (scaffold)."""
+"""Mixed generation and embedding workload helpers."""

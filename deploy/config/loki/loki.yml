@@ -1,5 +1,5 @@
-# Minimal single-binary Loki configuration for the appliance.
-# TODO: validate against the pinned Loki version and tune retention.
+# Minimal single-binary Loki configuration for the appliance. Logs are local
+# operational data and expire after seven days.
 auth_enabled: false
 
 server:
@@ -26,3 +26,11 @@ schema_config:
       index:
         prefix: index_
         period: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+limits_config:
+  retention_period: 168h

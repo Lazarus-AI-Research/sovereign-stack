@@ -1,1 +1,1 @@
-"""Sovereign Evals: smoke (scaffold)."""
+"""Smoke and readiness evaluation helpers."""

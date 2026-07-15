@@ -30,7 +30,7 @@ func testStore(t *testing.T) (context.Context, *Store) {
 	if err := store.EnsureSchema(ctx); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	pool.Exec(ctx, "TRUNCATE vectors.index_versions")
+	pool.Exec(ctx, "TRUNCATE vectors.workspace_bindings, vectors.index_versions CASCADE")
 	return ctx, store
 }
 
@@ -38,6 +38,7 @@ func create(t *testing.T, ctx context.Context, store *Store, profile string) Ver
 	t.Helper()
 	version, err := store.Create(ctx, CreateRequest{
 		WorkspaceID:    workspace,
+		ProviderSlug:   "default",
 		ProfileID:      profile,
 		ModelID:        "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
 		ModelRevision:  "main",
@@ -54,7 +55,7 @@ func create(t *testing.T, ctx context.Context, store *Store, profile string) Ver
 func TestCreateRequiresDiscoveredDimensions(t *testing.T) {
 	ctx, store := testStore(t)
 	_, err := store.Create(ctx, CreateRequest{
-		WorkspaceID: workspace, ProfileID: "p", ModelID: "m", DistanceMetric: "cosine",
+		WorkspaceID: workspace, ProviderSlug: "default", ProfileID: "p", ModelID: "m", DistanceMetric: "cosine",
 	})
 	if err == nil {
 		t.Fatal("zero dimensions accepted")
@@ -65,6 +66,8 @@ func TestActivateIsAtomicPerWorkspace(t *testing.T) {
 	ctx, store := testStore(t)
 	first := create(t, ctx, store, "text-compact")
 	second := create(t, ctx, store, "omni-default")
+	store.Progress(ctx, first.ID, 1, 1, 1)
+	store.Progress(ctx, second.ID, 1, 1, 1)
 
 	if _, err := store.Activate(ctx, first.ID); err != nil {
 		t.Fatalf("activate first: %v", err)
@@ -100,6 +103,7 @@ func TestActivateIsAtomicPerWorkspace(t *testing.T) {
 func TestActiveVersionCannotBeDeleted(t *testing.T) {
 	ctx, store := testStore(t)
 	version := create(t, ctx, store, "text-compact")
+	store.Progress(ctx, version.ID, 1, 1, 1)
 	if _, err := store.Activate(ctx, version.ID); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
@@ -107,6 +111,7 @@ func TestActiveVersionCannotBeDeleted(t *testing.T) {
 		t.Fatal("active version deleted")
 	}
 	replacement := create(t, ctx, store, "omni-default")
+	store.Progress(ctx, replacement.ID, 1, 1, 1)
 	store.Activate(ctx, replacement.ID)
 	if err := store.Delete(ctx, version.ID); err != nil {
 		t.Fatalf("delete inactive: %v", err)

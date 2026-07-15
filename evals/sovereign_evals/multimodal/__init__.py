@@ -1,1 +1,1 @@
-"""Sovereign Evals: multimodal (scaffold)."""
+"""Multimodal embedding evaluation helpers."""

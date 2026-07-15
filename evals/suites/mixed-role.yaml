@@ -1,4 +1,20 @@
 # Validated against schemas/eval-suite.schema.json.
 name: mixed-role
 description: Mixed generation/embedding workload benchmark
-checks: []  # TODO (design.md §19)
+checks:
+  - type: runtime-readiness
+  - type: benchmark-mixed
+    id: mixed-balanced
+    params: {target: gateway, generation_requests: 8, embedding_batches: 8}
+  - type: benchmark-mixed
+    id: generation-pressure
+    params: {target: gateway, generation_requests: 12, embedding_batches: 4}
+  - type: benchmark-mixed
+    id: embedding-pressure
+    params: {target: gateway, generation_requests: 4, embedding_batches: 12}
+  - type: chat-completion
+    id: post-pressure-chat
+    params: {target: gateway}
+  - type: text-embedding
+    id: post-pressure-embedding
+    params: {target: gateway}

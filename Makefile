@@ -2,7 +2,7 @@ SHELL := /bin/bash
 VERSION := $(shell cat VERSION)
 REGISTRY := ghcr.io/lazarus-ai-research
 
-.PHONY: help build test test-go test-evals images compose-validate clean
+.PHONY: help build web test test-go test-evals test-contracts test-scripts validate images compose-validate clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -14,7 +14,7 @@ build: ## Build Go services
 web: ## Build the Control UI into control/internal/web/dist
 	cd control/web && npm install --no-fund --no-audit && npm run build
 
-test: test-go test-evals ## Run all tests
+test: test-go test-evals test-contracts test-scripts ## Run all tests
 
 test-go: ## Run Go tests
 	cd control && go vet ./... && go test ./...
@@ -23,14 +23,26 @@ test-go: ## Run Go tests
 test-evals: ## Run evals tests
 	cd evals && python3 -m pytest tests
 
+test-contracts: ## Validate schemas and checked-in configuration contracts
+	python3 release/validate_contracts.py
+
+test-scripts: ## Parse every shipped shell entrypoint
+	bash -n deploy/scripts/*.sh deploy/scripts/sovereign
+	chmod +x tests/fixtures/bin/* tests/scripts/install-lifecycle.sh
+	tests/scripts/install-lifecycle.sh
+
+validate: test web compose-validate ## Run the local release contract gates
+
 images: ## Build application images (context: repo root)
-	docker build -f control/Dockerfile -t $(REGISTRY)/sovereign-control:$(VERSION) .
-	docker build -f docker-proxy/Dockerfile -t $(REGISTRY)/sovereign-docker-proxy:$(VERSION) .
+	docker build --build-arg VERSION=$(VERSION) -f control/Dockerfile -t $(REGISTRY)/sovereign-control:$(VERSION) .
+	docker build --build-arg VERSION=$(VERSION) -f docker-proxy/Dockerfile -t $(REGISTRY)/sovereign-docker-proxy:$(VERSION) .
 	docker build -f evals/Dockerfile -t $(REGISTRY)/sovereign-evals:$(VERSION) .
+	docker build --build-arg VERSION=$(VERSION) -f workspace/Dockerfile -t $(REGISTRY)/sovereign-workspace:$(VERSION) .
 
 compose-validate: ## Validate the Compose configuration
-	@test -f deploy/.env || cp deploy/.env.example deploy/.env
-	docker compose --project-directory deploy -f deploy/compose/compose.yml config -q
+	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml config -q
+	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.cuda.yml config -q
+	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
 	@echo "compose configuration valid"
 
 clean: ## Remove build artifacts

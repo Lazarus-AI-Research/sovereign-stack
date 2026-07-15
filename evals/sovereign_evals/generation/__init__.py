@@ -1,1 +1,1 @@
-"""Sovereign Evals: generation (scaffold)."""
+"""Generation evaluation helpers."""

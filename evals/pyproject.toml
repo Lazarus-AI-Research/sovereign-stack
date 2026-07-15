@@ -1,25 +1,25 @@
 [project]
 name = "sovereign-evals"
-version = "0.1.0.dev0"
+version = "0.1.0rc1"
 description = "Sovereign Stack evaluation, benchmark, and conformance suites"
 requires-python = ">=3.11"
 dependencies = [
-    "httpx",
-    "pyyaml",
-    "jsonschema",
-    "psycopg[binary]",
+    "httpx==0.28.1",
+    "pyyaml==6.0.3",
+    "jsonschema==4.26.0",
+    "psycopg[binary]==3.3.4",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
+    "pytest==9.1.1",
 ]
 
 [project.scripts]
 sovereign-evals = "sovereign_evals.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

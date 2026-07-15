@@ -14,6 +14,8 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/backups"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/bundles"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/credentials"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/database"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
@@ -50,31 +52,16 @@ func main() {
 	server.Models = registry
 	server.Reports = sovereignRoot + "/reports"
 	server.SovereignRoot = sovereignRoot
-	server.Workspace = workspace.New(cmp.Or(os.Getenv("WORKSPACE_BASE_URL"), "http://sovereign-workspace:3001"))
+	server.Workspace = workspace.NewWithIndexAdmin(
+		cmp.Or(os.Getenv("WORKSPACE_BASE_URL"), "http://sovereign-workspace:3001"),
+		cmp.Or(os.Getenv("WORKSPACE_INDEX_ADMIN_URL"), "http://sovereign-workspace:3011"),
+		os.Getenv("WORKSPACE_INDEX_ADMIN_TOKEN"),
+	)
 	profiles := embeddings.NewRegistry(sovereignRoot + "/config/embedding-profiles.yaml")
 	server.Profiles = profiles
-	server.GatewayConfigPath = sovereignRoot + "/config/litellm/config.yaml"
+	server.GatewayConfigPath = cmp.Or(os.Getenv("LITELLM_CONFIG_PATH"), sovereignRoot+"/config/litellm/config.yaml")
 	server.Branding = branding.NewStore(sovereignRoot+"/config/branding.yaml", "Customer branding")
 	server.Features = branding.NewStore(sovereignRoot+"/config/feature-flags.yaml", "Product feature flags")
-
-	if vectorsURL := os.Getenv("PGVECTOR_CONNECTION_STRING"); vectorsURL != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			defer cancel()
-			pool, err := database.Connect(ctx, vectorsURL)
-			if err != nil {
-				log.Printf("warning: vectors database unavailable, index management disabled: %v", err)
-				return
-			}
-			store := indexes.New(pool)
-			if err := store.EnsureSchema(context.Background()); err != nil {
-				log.Printf("warning: vectors schema setup failed: %v", err)
-				return
-			}
-			server.Indexes = store
-			log.Print("index management ready (vectors database)")
-		}()
-	}
 
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
 		pool := connectWithRetry(databaseURL)
@@ -84,6 +71,15 @@ func main() {
 			log.Fatalf("admin bootstrap failed: %v", err)
 		}
 		server.Auth = authService
+		vaultPath := cmp.Or(os.Getenv("SOVEREIGN_VAULT_KEY_FILE"), sovereignRoot+"/secrets/control-vault.key")
+		if key, err := credentials.LoadKey(vaultPath, os.Getenv("SOVEREIGN_VAULT_KEY")); err != nil {
+			log.Printf("warning: provider credential vault disabled: %v", err)
+		} else if vault, err := credentials.New(pool, key); err != nil {
+			log.Printf("warning: provider credential vault disabled: %v", err)
+		} else {
+			server.Credentials = vault
+			log.Print("encrypted provider credential vault ready")
+		}
 
 		runner := jobs.New(pool)
 		loader := models.LoadDeps{
@@ -101,6 +97,22 @@ func main() {
 		server.Backups = backupDeps
 		runner.Register("backup", backupDeps.HandleBackup)
 		runner.Register("backup-restore", backupDeps.HandleRestore)
+		bundleImages := []string{}
+		for _, key := range []string{
+			"SOVEREIGN_CONTROL_IMAGE", "SOVEREIGN_DOCKER_PROXY_IMAGE", "SOVEREIGN_EVALS_IMAGE",
+			"SOVEREIGN_WORKSPACE_IMAGE", "SOVEREIGN_RUNTIME_IMAGE", "CADDY_IMAGE", "LITELLM_IMAGE",
+			"PGVECTOR_IMAGE", "PHOENIX_IMAGE", "PROMETHEUS_IMAGE", "GRAFANA_IMAGE", "LOKI_IMAGE", "OTEL_IMAGE",
+		} {
+			if image := os.Getenv(key); image != "" {
+				bundleImages = append(bundleImages, image)
+			}
+		}
+		bundleDeps := &bundles.Deps{
+			Root: sovereignRoot, ReleaseRoot: cmp.Or(os.Getenv("SOVEREIGN_RELEASE_MOUNT"), "/sovereign-release"),
+			Version: version, Profile: os.Getenv("SOVEREIGN_PROFILE"), Images: bundleImages, Proxy: server.Proxy,
+		}
+		server.Bundles = bundleDeps
+		runner.Register("bundle-create", bundleDeps.HandleCreate)
 		activator := embeddings.ActivateDeps{
 			Registry:   profiles,
 			ConfigPath: loader.ConfigPath,
@@ -108,7 +120,19 @@ func main() {
 			Runtime:    server.Runtime,
 		}
 		runner.Register("profile-activate", activator.HandleActivate)
-		evalsImage := cmp.Or(os.Getenv("SOVEREIGN_EVALS_IMAGE"), "ghcr.io/lazarus-ai-research/sovereign-evals:latest")
+		if vectorsURL := os.Getenv("PGVECTOR_CONNECTION_STRING"); vectorsURL != "" {
+			vectorsPool := connectPoolWithRetry(vectorsURL)
+			store := indexes.New(vectorsPool)
+			if err := store.EnsureSchema(context.Background()); err != nil {
+				log.Fatalf("vectors schema setup failed: %v", err)
+			}
+			server.Indexes = store
+			runner.Register("index-rebuild", indexes.RebuildDeps{
+				Store: store, Profiles: profiles, Activator: activator, Workspace: server.Workspace,
+			}.Handle)
+			log.Print("versioned index management ready (vectors database)")
+		}
+		evalsImage := cmp.Or(os.Getenv("SOVEREIGN_EVALS_IMAGE"), "ghcr.io/lazarus-ai-research/sovereign-evals:"+version)
 		runner.Register("evals-run", func(ctx context.Context, payload json.RawMessage) (any, error) {
 			var body struct {
 				Suite string `json:"suite"`
@@ -157,3 +181,20 @@ func connectWithRetry(databaseURL string) *databasePool {
 }
 
 type databasePool = database.Pool
+
+func connectPoolWithRetry(databaseURL string) *databasePool {
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		pool, err := database.Connect(ctx, databaseURL)
+		cancel()
+		if err == nil {
+			return pool
+		}
+		if time.Now().After(deadline) {
+			log.Fatalf("database not ready after 90s: %v", err)
+		}
+		log.Printf("waiting for database: %v", err)
+		time.Sleep(3 * time.Second)
+	}
+}

@@ -125,7 +125,7 @@ manifest → startup smoke test (§20) → terminal state → logs + metrics.
 
 Honesty requirements:
 - The manifest reports **observed** execution: backend/accelerator as actually
-  used (Metal Phase 1 reports CPU execution), embedding dimensions as probed.
+  used (including the Metal host agent), embedding dimensions as probed.
 - Role-level degradation never implies process-level fault isolation (§3.4).
 - Memory weights are best-effort; observed memory is reported via metrics (§3.5).
 

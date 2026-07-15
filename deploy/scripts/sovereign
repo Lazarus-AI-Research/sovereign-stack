@@ -1,44 +1,169 @@
 #!/usr/bin/env bash
-# sovereign — appliance management CLI.
-#
-# Runs docker compose with the project directory pinned to deploy/ so that
-# relative volume paths (./config/...) and .env resolve there regardless of
-# where this script is invoked from.
-set -euo pipefail
+# Management CLI for an installed SovereignStack appliance.
+set -Eeuo pipefail
 
-DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROFILE="${SOVEREIGN_PROFILE:-cpu}"
+SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
+CURRENT="$SOVEREIGN_HOME/current"
+ENV_FILE="$SOVEREIGN_HOME/.env"
+[[ -d "$CURRENT/deploy" ]] || { echo "error: SovereignStack is not installed at $SOVEREIGN_HOME" >&2; exit 1; }
+[[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE is missing" >&2; exit 1; }
+
+PROFILE="${SOVEREIGN_PROFILE:-$(<"$SOVEREIGN_HOME/state/profile")}"
+case "$PROFILE" in
+  cuda-x86_64) OVERLAY=cuda ;;
+  metal-arm64) OVERLAY=metal ;;
+  *) echo "error: unsupported installed profile $PROFILE" >&2; exit 1 ;;
+esac
 
 compose() {
-  docker compose \
-    --project-directory "$DEPLOY_ROOT" \
-    -f "$DEPLOY_ROOT/compose/compose.yml" \
-    -f "$DEPLOY_ROOT/compose/compose.runtime.${PROFILE}.yml" \
-    "$@"
+  docker compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE" \
+    -f "$CURRENT/deploy/compose/compose.yml" \
+    -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml" "$@"
+}
+
+env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed 's/^"//;s/"$//'; }
+HTTP_PORT="$(env_value HTTP_PORT)"
+HTTP_PORT="${HTTP_PORT:-8880}"
+BASE_URL="http://127.0.0.1:$HTTP_PORT"
+
+ensure_project_owner() {
+  local container owner expected
+  expected="$(cd "$SOVEREIGN_HOME" && pwd -P)"
+  for container in sovereign-postgres sovereign-runtime sovereign-caddy; do
+    docker inspect "$container" >/dev/null 2>&1 || continue
+    owner="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container" 2>/dev/null || true)"
+    if [[ "$owner" != "$expected" && "${SOVEREIGN_ALLOW_PROJECT_TAKEOVER:-0}" != 1 ]]; then
+      echo "error: $container belongs to another SovereignStack installation (${owner:-unknown})" >&2
+      echo "stop that installation first; set SOVEREIGN_ALLOW_PROJECT_TAKEOVER=1 only for an intentional migration" >&2
+      return 1
+    fi
+    return 0
+  done
+}
+
+wait_ready() {
+  local deadline=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700}))
+  echo "waiting for runtime readiness (first model download can take a while)..."
+  until docker exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || {
+      compose ps
+      compose logs --tail 120 sovereign-runtime
+      echo "error: runtime did not become ready before timeout" >&2
+      return 1
+    }
+    sleep 5
+  done
+  until curl -fsS "$BASE_URL/api/control/v1/health" >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || return 1
+    sleep 2
+  done
+}
+
+api_login() {
+  local username password
+  username="$(sed -n 's/^username=//p' "$SOVEREIGN_HOME/credentials")"
+  password="$(sed -n 's/^password=//p' "$SOVEREIGN_HOME/credentials")"
+  API_COOKIE="$(mktemp "${TMPDIR:-/tmp}/sovereign-cookie.XXXXXX")"
+  trap 'rm -f "${API_COOKIE:-}"' EXIT
+  curl -fsS -c "$API_COOKIE" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$username\",\"password\":\"$password\"}" \
+    "$BASE_URL/api/control/v1/auth/login" >/dev/null
+}
+
+api_post_job() {
+  local path="$1" body="${2:-}" response job deadline status
+  [[ -n "$body" ]] || body='{}'
+  api_login
+  response="$(curl -fsS -b "$API_COOKIE" -H 'Content-Type: application/json' -d "$body" "$BASE_URL/api/control/v1$path")"
+  job="$(printf '%s' "$response" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')"
+  [[ -n "$job" ]] || { printf '%s\n' "$response"; return 0; }
+  echo "job: $job"
+  deadline=$((SECONDS + 3600))
+  while (( SECONDS < deadline )); do
+    response="$(curl -fsS -b "$API_COOKIE" "$BASE_URL/api/control/v1/jobs/$job")"
+    status="$(printf '%s' "$response" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
+    case "$status" in
+      succeeded) printf '%s\n' "$response"; return 0 ;;
+      failed) printf '%s\n' "$response" >&2; return 1 ;;
+    esac
+    sleep 2
+  done
+  echo "error: job $job timed out" >&2
+  return 1
 }
 
 usage() {
-  cat <<EOF
-Usage: sovereign <command>
+  cat <<'EOF'
+Usage: sovereign <command> [options]
 
-  up        Start the stack (SOVEREIGN_PROFILE=cuda|dgx-spark|rocm|strix-halo|xpu|metal|cpu; default: cpu)
-  down      Stop the stack
-  status    Show service status
-  logs      Tail service logs (extra args passed to docker compose logs)
-  validate  Validate the compose configuration
+  up                         Pull, start, wait, and run the smoke suite
+  down                       Stop the appliance without deleting data
+  status                     Show containers and the product health endpoint
+  logs [compose log args]    Show or follow service logs
+  smoke [suite]              Run a named eval suite (default: smoke)
+  backup                     Create and verify a backup
+  restore <id> --yes         Restore a verified backup
+  bundle create [options]    Create a same-platform offline bundle
+  bundle install <archive>   Install a same-platform offline bundle
+  validate                   Validate the resolved Compose configuration
+  uninstall [--purge]        Remove the appliance; preserve data by default
+  version                    Print the installed version
 EOF
 }
 
-if [[ ! -f "$DEPLOY_ROOT/.env" ]]; then
-  echo "error: $DEPLOY_ROOT/.env not found — copy .env.example and edit it" >&2
-  exit 1
-fi
-
 case "${1:-help}" in
-  up)       compose up -d ;;
-  down)     compose down ;;
-  status)   compose ps ;;
-  logs)     shift; compose logs "$@" ;;
-  validate) compose config -q && echo "compose configuration valid (profile: $PROFILE)" ;;
-  help|*)   usage ;;
+  up)
+    ensure_project_owner
+    if [[ ! -f "$SOVEREIGN_HOME/state/offline" ]]; then compose pull; fi
+    compose up -d --remove-orphans
+    wait_ready
+    if [[ "${SOVEREIGN_SKIP_SMOKE:-0}" != 1 ]]; then
+      compose --profile tools run --rm sovereign-evals suite smoke --report-dir /sovereign/reports
+    fi
+    echo "ready: $BASE_URL/"
+    ;;
+  down) compose down ;;
+  status)
+    compose ps
+    curl -fsS "$BASE_URL/api/control/v1/health" || true
+    echo
+    ;;
+  logs) shift; compose logs "$@" ;;
+  smoke)
+    suite="${2:-smoke}"
+    compose --profile tools run --rm sovereign-evals suite "$suite" --report-dir /sovereign/reports
+    ;;
+  backup)
+    backup_result="$(api_post_job /backups '{}')"
+    printf '%s\n' "$backup_result"
+    backup_id="$(printf '%s\n' "$backup_result" | sed -n 's/.*"backup_id":"\([^"]*\)".*/\1/p' | tail -n 1)"
+    [[ -n "$backup_id" ]] || { echo "error: backup job returned no backup_id" >&2; exit 1; }
+    api_login
+    verification="$(curl -fsS -b "$API_COOKIE" -H 'Content-Type: application/json' -d '{}' \
+      "$BASE_URL/api/control/v1/backups/$backup_id/verify")"
+    printf '%s\n' "$verification"
+    printf '%s' "$verification" | grep -q '"valid":true' || {
+      echo "error: backup $backup_id failed verification" >&2
+      exit 1
+    }
+    ;;
+  restore)
+    [[ -n "${2:-}" && "${3:-}" == --yes ]] || { echo "usage: sovereign restore <backup-id> --yes" >&2; exit 2; }
+    api_post_job "/backups/$2/restore" '{}'
+    ;;
+  bundle)
+    case "${2:-}" in
+      create) shift 2; SOVEREIGN_HOME="$SOVEREIGN_HOME" "$CURRENT/deploy/scripts/create-offline-bundle.sh" "$@" ;;
+      install)
+        [[ -f "${3:-}" ]] || { echo "usage: sovereign bundle install <archive>" >&2; exit 2; }
+        SOVEREIGN_HOME="$SOVEREIGN_HOME" "$CURRENT/deploy/scripts/install.sh" --offline-bundle "$3" --profile "$PROFILE"
+        ;;
+      *) echo "usage: sovereign bundle create|install" >&2; exit 2 ;;
+    esac
+    ;;
+  validate) compose config -q && echo "Compose configuration valid ($PROFILE)" ;;
+  uninstall) shift; SOVEREIGN_HOME="$SOVEREIGN_HOME" "$CURRENT/deploy/scripts/uninstall.sh" "$@" ;;
+  version) if [[ -f "$CURRENT/VERSION" ]]; then cat "$CURRENT/VERSION"; else env_value SOVEREIGN_VERSION; fi ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
 esac

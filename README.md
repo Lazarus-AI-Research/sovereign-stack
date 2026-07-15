@@ -3,7 +3,19 @@
 A local-first AI appliance for small offices, workgroups, and customer-owned
 hardware. One product, one control plane, one gateway, one runtime endpoint.
 
-The full implementation and design specification lives in [design.md](design.md).
+The full design specification lives in [design.md](design.md). v0.1 supports
+Apple Silicon Macs (32 GB+) and Ubuntu 24.04 NVIDIA CUDA hosts (24 GB+ VRAM).
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0/deploy/scripts/install.sh | bash
+```
+
+This verifies a signed release, detects the host profile, generates credentials,
+starts the appliance, and runs its smoke gate. See
+[`docs/installation.md`](docs/installation.md) for prerequisites, release
+candidates, offline bundles, and uninstall behavior.
 
 ## Repository layout
 
@@ -21,12 +33,14 @@ its own repository because it tracks upstream vLLM.
 | `docs/` | Product and operations documentation. |
 | `tests/` | Cross-component tests, including the release-gate integration suite. |
 
-## Quick start (development)
+## Development deployment
 
 ```bash
 cp deploy/.env.example deploy/.env   # then edit secrets
-./deploy/scripts/sovereign validate  # check compose configuration
-./deploy/scripts/sovereign up        # SOVEREIGN_PROFILE=cuda|metal|... (default: cpu)
+SOVEREIGN_SOURCE_DIR="$PWD" SOVEREIGN_SKIP_START=1 \
+  ./deploy/scripts/install.sh
+sovereign validate
+sovereign up
 ```
 
 The runtime profile for the current host can be suggested with:
@@ -40,7 +54,7 @@ The runtime profile for the current host can be suggested with:
 ```bash
 make build   # build Go services
 make test    # Go tests + evals tests
-make images  # build sovereign-control, sovereign-docker-proxy, sovereign-evals images
+make images  # build all four SovereignStack application images
 ```
 
 Go modules (`control/`, `docker-proxy/`) are tied together by `go.work`.
@@ -50,3 +64,8 @@ Go modules (`control/`, `docker-proxy/`) are tied together by `go.work`.
 `VERSION` is the single version stamp. Release CI builds and tags all
 application images from one commit. Production deployments must use immutable
 version tags (design.md §7).
+
+The two-repository publication order and final clean-host checks are in the
+[release runbook](docs/releasing.md). Platform gate evidence is recorded for
+[Apple Metal](docs/metal-validation-results.md) and
+[NVIDIA CUDA](docs/cuda-validation-results.md).

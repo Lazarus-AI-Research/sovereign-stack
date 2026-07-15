@@ -12,13 +12,21 @@ import (
 )
 
 type Profile struct {
-	Provider        string   `yaml:"provider" json:"provider"`
-	Model           string   `yaml:"model" json:"model"`
-	Revision        string   `yaml:"revision" json:"revision"`
-	ServedModelName string   `yaml:"served_model_name" json:"served_model_name"`
-	Pooling         string   `yaml:"pooling,omitempty" json:"pooling,omitempty"`
-	Normalization   string   `yaml:"normalization,omitempty" json:"normalization,omitempty"`
-	Modalities      []string `yaml:"modalities" json:"modalities"`
+	Provider             string   `yaml:"provider" json:"provider"`
+	Source               string   `yaml:"source" json:"source"`
+	Model                string   `yaml:"model" json:"model"`
+	Revision             string   `yaml:"revision" json:"revision"`
+	Artifact             string   `yaml:"artifact,omitempty" json:"artifact,omitempty"`
+	SHA256               string   `yaml:"sha256,omitempty" json:"sha256,omitempty"`
+	ServedModelName      string   `yaml:"served_model_name" json:"served_model_name"`
+	Pooling              string   `yaml:"pooling,omitempty" json:"pooling,omitempty"`
+	Normalization        string   `yaml:"normalization,omitempty" json:"normalization,omitempty"`
+	DistanceMetric       string   `yaml:"distance_metric" json:"distance_metric"`
+	QueryPrefix          string   `yaml:"query_prefix,omitempty" json:"query_prefix,omitempty"`
+	DocumentPrefix       string   `yaml:"document_prefix,omitempty" json:"document_prefix,omitempty"`
+	ChunkingStrategy     string   `yaml:"chunking_strategy" json:"chunking_strategy"`
+	PreprocessingVersion string   `yaml:"preprocessing_version" json:"preprocessing_version"`
+	Modalities           []string `yaml:"modalities" json:"modalities"`
 }
 
 type profilesFile struct {
@@ -80,8 +88,20 @@ func (r *Registry) Get(id string) (Profile, error) {
 }
 
 func (r *Registry) Put(id string, profile Profile) error {
-	if id == "" || profile.Model == "" || profile.ServedModelName == "" {
+	if id == "" || profile.Model == "" || profile.ServedModelName == "" || profile.Revision == "" {
 		return fmt.Errorf("profile id, model, and served_model_name are required")
+	}
+	if profile.Source == "" {
+		profile.Source = "huggingface"
+	}
+	if profile.DistanceMetric == "" {
+		profile.DistanceMetric = "cosine"
+	}
+	if profile.ChunkingStrategy == "" {
+		profile.ChunkingStrategy = "recursive-v1"
+	}
+	if profile.PreprocessingVersion == "" {
+		profile.PreprocessingVersion = "sovereign-embed-v1"
 	}
 	if len(profile.Modalities) == 0 {
 		return fmt.Errorf("at least one modality is required")

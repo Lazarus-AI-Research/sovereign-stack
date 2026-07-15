@@ -1,0 +1,18 @@
+# Metal profile defaults. Installed as embedding-profiles.yaml on Apple Silicon.
+embedding_profiles:
+  text-compact:
+    provider: sovereign-runtime
+    source: local
+    model: nomic-ai/nomic-embed-text-v1.5-GGUF
+    revision: 0188c9bf409793f810680a5a431e7b899c46104c
+    artifact: nomic-embed-text-v1.5.Q8_0.gguf
+    sha256: 3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7
+    served_model_name: embedding-text-compact
+    pooling: mean
+    normalization: l2
+    distance_metric: cosine
+    query_prefix: "search_query: "
+    document_prefix: "search_document: "
+    chunking_strategy: recursive-v1
+    preprocessing_version: sovereign-nomic-v1
+    modalities: [text]

@@ -34,10 +34,26 @@ type BackupJob struct {
 type Config struct {
 	AllowedProject       string    `yaml:"allowed_project"`
 	AllowedImagePrefixes []string  `yaml:"allowed_image_prefixes"`
+	AllowedExportImages  []string  `yaml:"allowed_export_images"`
 	AllowedServices      []string  `yaml:"allowed_services"`
 	AllowedOperations    []string  `yaml:"allowed_operations"`
 	Evals                EvalsJob  `yaml:"evals"`
 	Backup               BackupJob `yaml:"backup"`
+}
+
+// ExportImageAllowed permits first-party release images plus an exact list of
+// reviewed third-party pins. It deliberately does not widen pull permissions
+// to arbitrary public registries.
+func (c *Config) ExportImageAllowed(ref string) Decision {
+	if c.ImageAllowed(ref).Allowed {
+		return allow()
+	}
+	for _, allowed := range c.AllowedExportImages {
+		if ref == allowed {
+			return allow()
+		}
+	}
+	return deny(fmt.Sprintf("image %q is not in allowed_export_images", ref))
 }
 
 func Load(path string) (*Config, error) {

@@ -1,1 +1,1 @@
-"""Sovereign Evals: reports (scaffold)."""
+"""Persistent JSON and HTML evaluation reporting."""

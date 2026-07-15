@@ -1,7 +1,34 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/offline-bundle.schema.json",
-  "title": "Sovereign Offline Bundle",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "title": "Sovereign offline bundle manifest",
+  "type": "object",
+  "required": ["schema_version", "bundle_id", "version", "profile", "architecture", "created_at", "images", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "bundle_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
+    "profile": { "enum": ["cuda-x86_64", "metal-arm64"] },
+    "architecture": { "enum": ["amd64", "arm64"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "includes_weights": { "type": "boolean", "default": false },
+    "images": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+    "files": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+    "signature_bundle": { "type": "string" }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["name", "sha256", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "source": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
 }

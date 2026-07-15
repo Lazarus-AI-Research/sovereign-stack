@@ -1,1 +1,1 @@
-"""Sovereign Evals: phoenix (scaffold)."""
+"""Phoenix metadata-tracing evaluation helpers."""

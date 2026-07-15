@@ -15,20 +15,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   const body = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    throw new ApiError(resp.status, body.error ?? resp.statusText);
-  }
+  if (!resp.ok) throw new ApiError(resp.status, body.error ?? resp.statusText);
   return body as T;
 }
 
+const idPath = (id: string) => encodeURIComponent(id);
+
 export interface Status {
   control: { status: string; version: string };
-  runtime: {
-    reachable: boolean;
-    state?: string;
-    ready?: boolean;
-    required_roles?: Record<string, boolean>;
-  };
+  runtime: { reachable: boolean; state?: string; ready?: boolean; required_roles?: Record<string, boolean> };
   gateway: { healthy: boolean };
   docker_proxy: { reachable: boolean; docker?: string };
   services?: Record<string, string>;
@@ -39,39 +34,200 @@ export interface Manifest {
   profile: string;
   backend: string;
   runtime_version: string;
-  roles: Record<
-    string,
-    {
-      enabled: boolean;
-      status: string;
-      served_model_name?: string;
-      engine_model?: string;
-      dimensions?: number;
-      modalities?: string[];
-    }
-  >;
+  roles: Record<string, {
+    enabled: boolean;
+    status: string;
+    served_model_name?: string;
+    engine_model?: string;
+    dimensions?: number;
+    modalities?: string[];
+  }>;
 }
 
 export interface RuntimeErrors {
-  errors: {
-    code: string;
-    role?: string;
-    message: string;
-    recoverable: boolean;
-    first_seen: string;
-  }[];
+  errors: { code: string; role?: string; message: string; recoverable: boolean; first_seen: string }[];
+}
+
+export interface ModelEntry {
+  id: string;
+  role: string;
+  source: string;
+  model: string;
+  revision?: string;
+  artifact?: string;
+  sha256?: string;
+  base_url?: string;
+  credential_id?: string;
+  provider?: string;
+  capabilities?: string[];
+  compatible_profiles?: string[];
+  validation_state?: string;
+  loaded?: boolean;
+}
+
+export interface EmbeddingProfile {
+  provider: string;
+  source: string;
+  model: string;
+  revision: string;
+  served_model_name: string;
+  pooling?: string;
+  normalization?: string;
+  distance_metric: string;
+  query_prefix?: string;
+  document_prefix?: string;
+  chunking_strategy: string;
+  preprocessing_version: string;
+  modalities: string[];
+}
+
+export interface IndexVersion {
+  id: string;
+  workspace_id: string;
+  provider_slug: string;
+  profile_id: string;
+  model_id: string;
+  model_revision: string;
+  dimensions: number;
+  status: string;
+  document_count: number;
+  processed_documents: number;
+  vector_count: number;
+  error?: string;
+  created_at: string;
+}
+
+export interface Workspace {
+  id: string;
+  upstream_id: number;
+  name: string;
+  slug: string;
+}
+
+export interface Job {
+  id: string;
+  kind: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  result?: unknown;
+  error?: string;
+}
+
+export interface EvalReport {
+  suite?: string;
+  generated_at?: string;
+  passed?: boolean;
+  results?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface BackupManifest {
+  id: string;
+  created_at: string;
+  files: { name: string; bytes: number; sha256: string }[];
+  excludes: string[];
+}
+
+export interface BundleManifest {
+  bundle_id: string;
+  version: string;
+  profile: string;
+  architecture: string;
+  created_at: string;
+  includes_weights: boolean;
+  images: unknown[];
+  models: { name: string }[];
+  files: { name: string; bytes: number }[];
+}
+
+export interface CredentialMetadata {
+  id: string;
+  provider: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Branding {
+  product_name: string;
+  company_name: string;
+  logo: string;
+  logo_animated?: string;
+  favicon: string;
+  colors: { primary: string; accent: string };
+}
+
+export interface Features {
+  phoenix: { enabled: boolean };
+  tracing: { enabled: boolean; metadata_only: boolean; full_trace: boolean; prompt_logging: boolean; response_logging: boolean };
+  prompt_logging: { enabled: boolean };
 }
 
 export const api = {
-  login: (username: string, password: string) =>
-    request<{ token: string }>("/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    }),
+  login: (username: string, password: string) => request<{ token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request<unknown>("/auth/logout", { method: "POST" }),
   me: () => request<{ username: string }>("/auth/me"),
   status: () => request<Status>("/status"),
   manifest: () => request<Manifest>("/runtime/manifest"),
   runtimeErrors: () => request<RuntimeErrors>("/runtime/errors"),
   restartRuntime: () => request<unknown>("/runtime/restart", { method: "POST" }),
+
+  models: () => request<{ models: ModelEntry[] }>("/models"),
+  createModel: (model: ModelEntry) => request<ModelEntry>("/models", { method: "POST", body: JSON.stringify(model) }),
+  deleteModel: (id: string) => request<unknown>(`/models/${idPath(id)}`, { method: "DELETE" }),
+  loadModel: (id: string) => request<{ job_id?: string }>(`/models/${idPath(id)}/load`, { method: "POST" }),
+  smokeModel: (id: string) => request<{ job_id: string }>(`/models/${idPath(id)}/smoke-test`, { method: "POST" }),
+
+  embeddingProfiles: () => request<{ embedding_profiles: Record<string, EmbeddingProfile> }>("/embedding-profiles"),
+  activateProfile: (id: string) => request<{ job_id: string }>(`/embedding-profiles/${idPath(id)}/activate`, { method: "POST" }),
+  validateProfile: (id: string) => request<Record<string, unknown>>(`/embedding-profiles/${idPath(id)}/validate`, { method: "POST" }),
+  indexes: () => request<{ indexes: IndexVersion[] }>("/indexes"),
+  workspaces: () => request<{ workspaces: Workspace[] }>("/workspaces"),
+  startIndex: (workspace: Workspace, profile: string) => request<{ job_id: string }>("/indexes/rebuild", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspace.id, provider_slug: workspace.slug, embedding_profile: profile }),
+  }),
+  rebuildIndex: (id: string, profile: string) => request<{ job_id: string }>(`/indexes/${idPath(id)}/rebuild`, {
+    method: "POST", body: JSON.stringify({ embedding_profile: profile, activate_when_complete: true }),
+  }),
+  activateIndex: (id: string) => request<IndexVersion>(`/indexes/${idPath(id)}/activate`, { method: "POST" }),
+
+  runEval: (suite: string) => request<{ job_id: string }>("/evals/suite", { method: "POST", body: JSON.stringify({ suite }) }),
+  evalResults: () => request<{ results: string[] }>("/evals/results"),
+  evalResult: (id: string) => request<EvalReport>(`/evals/results/${idPath(id)}`),
+
+  backups: () => request<{ backups: BackupManifest[] }>("/backups"),
+  createBackup: () => request<{ job_id: string }>("/backups", { method: "POST", body: "{}" }),
+  verifyBackup: (id: string) => request<{ valid: boolean; problems: string[] }>(`/backups/${idPath(id)}/verify`, { method: "POST" }),
+  restoreBackup: (id: string) => request<{ job_id: string }>(`/backups/${idPath(id)}/restore`, { method: "POST", body: "{}" }),
+  bundles: () => request<{ bundles: BundleManifest[] }>("/bundles"),
+  createBundle: (profile: string, includeModels: string[]) => request<{ job_id: string }>("/bundles", {
+    method: "POST", body: JSON.stringify({ profile, include_models: includeModels }),
+  }),
+  bundleDownloadURL: (id: string) => `${BASE}/bundles/${idPath(id)}/download`,
+
+  credentials: () => request<{ credentials: CredentialMetadata[] }>("/provider-credentials"),
+  createCredential: (value: { id: string; provider: string; label: string; secret: string }) => request<CredentialMetadata>("/provider-credentials", {
+    method: "POST", body: JSON.stringify(value),
+  }),
+  deleteCredential: (id: string) => request<unknown>(`/provider-credentials/${idPath(id)}`, { method: "DELETE" }),
+  gatewayKeys: () => request<Record<string, unknown>>("/gateway/keys"),
+  createGatewayKey: (value: { key_alias: string; models?: string[]; max_budget?: number; tpm_limit?: number; rpm_limit?: number }) => request<Record<string, unknown>>("/gateway/keys", {
+    method: "POST", body: JSON.stringify(value),
+  }),
+
+  branding: () => request<Branding>("/branding"),
+  saveBranding: (value: Branding) => request<Branding>("/branding", { method: "PUT", body: JSON.stringify(value) }),
+  applyBranding: () => request<unknown>("/workspace/branding/apply", { method: "POST", body: "{}" }),
+  features: () => request<Features>("/features"),
+  job: (id: string) => request<Job>(`/jobs/${idPath(id)}`),
+  waitJob: async (id: string, timeoutMs = 3_600_000): Promise<Job> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const job = await request<Job>(`/jobs/${idPath(id)}`);
+      if (job.status === "succeeded") return job;
+      if (job.status === "failed") throw new ApiError(500, job.error ?? `${job.kind} failed`);
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    throw new ApiError(408, "operation timed out");
+  },
 };

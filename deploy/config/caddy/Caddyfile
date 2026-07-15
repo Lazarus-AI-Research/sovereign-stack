@@ -1,5 +1,5 @@
-# Sovereign Stack ingress. Only Caddy is externally exposed (design.md §22).
-# TODO: production TLS / domain configuration, managed by Sovereign Control.
+# Sovereign Stack ingress. v0.1 binds Caddy to host loopback, so local HTTP is
+# intentional; remote exposure requires an operator-managed TLS reverse proxy.
 
 :80 {
 	# Sovereign Control admin UI and API

@@ -1,46 +1,194 @@
 name: release
 
-# On a version tag: build every application image from one commit, stamped
-# from the tag, and push to GHCR (design.md §7 — immutable version tags).
-# Runtime images build from the sovereign-vllm repo on its own cadence.
-
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io/lazarus-ai-research
 
 jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: control/web/package-lock.json
+      - name: Require exact release version
+        run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
+      - name: Shell and repository checks
+        run: |
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign
+          git diff --check
+      - name: Go services
+        run: |
+          (cd control && go vet ./... && go test ./...)
+          (cd docker-proxy && go vet ./... && go test ./...)
+      - name: Evals and schema contracts
+        run: |
+          python -m pip install -e 'evals[dev]' jsonschema PyYAML
+          pytest evals/tests
+          python release/validate_contracts.py
+      - name: Control UI
+        run: npm ci --prefix control/web --no-fund --no-audit && npm run build --prefix control/web
+      - name: Compose contracts
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose --project-directory deploy --env-file deploy/.env \
+            -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.cuda.yml config -q
+          docker compose --project-directory deploy --env-file deploy/.env \
+            -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
+
   images:
-    runs-on: ubuntu-latest
+    needs: validate
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
-        image:
+        include:
           - name: sovereign-control
             dockerfile: control/Dockerfile
           - name: sovereign-docker-proxy
             dockerfile: docker-proxy/Dockerfile
           - name: sovereign-evals
             dockerfile: evals/Dockerfile
+          - name: sovereign-workspace
+            dockerfile: workspace/Dockerfile
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: version from tag
+      - uses: sigstore/cosign-installer@v3
+      - name: Version from tag
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.image.dockerfile }}
-          push: true
-          build-args: |
-            VERSION=${{ env.VERSION }}
-          tags: |
-            ghcr.io/lazarus-ai-research/${{ matrix.image.name }}:${{ env.VERSION }}
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ env.VERSION }}
+          tags: ${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.VERSION }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: mode=max
+          sbom: true
+      - name: Sign image index
+        run: cosign sign --yes "${REGISTRY}/${{ matrix.name }}:${VERSION}@${{ steps.build.outputs.digest }}"
+      - name: Record digest
+        run: |
+          mkdir -p digests
+          printf '%s\n' '${{ steps.build.outputs.digest }}' > 'digests/${{ matrix.name }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.name }}
+          path: digests/${{ matrix.name }}
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, images]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - name: Resolve required runtime releases
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for profile in cuda-x86_64 metal-arm64; do
+            ref="$REGISTRY/sovereign-runtime:$profile-$VERSION"
+            digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ {print $2; exit}')"
+            test -n "$digest"
+            case "$profile" in
+              cuda-x86_64) name=sovereign-runtime-cuda ;;
+              metal-arm64) name=sovereign-runtime-metal ;;
+            esac
+            printf '%s\n' "$digest" > "digests/$name"
+            cosign verify \
+              --certificate-identity-regexp '^https://github.com/Lazarus-AI-Research/sovereign-vllm/.github/workflows/release.yml@refs/tags/v' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$ref@$digest" >/dev/null
+          done
+      - name: Generate release manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 release/generate_manifest.py \
+            --digest-dir digests \
+            --stack-commit "$GITHUB_SHA" \
+            --output release/manifest.json
+          python3 -m pip install jsonschema PyYAML
+          python3 release/validate_contracts.py
+          test "$(python3 -c 'import json; print(json.load(open("release/manifest.json"))["version"])')" = "$VERSION"
+      - name: Package release
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ROOT="sovereign-stack-$VERSION"
+          mkdir -p "$ROOT"
+          cp -R deploy docs schemas api release "$ROOT/"
+          cp VERSION LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md CHANGELOG.md "$ROOT/"
+          rm -rf "$ROOT/deploy/.env" "$ROOT/deploy/models" "$ROOT/deploy/logs" \
+            "$ROOT/deploy/reports" "$ROOT/deploy/backups" "$ROOT/deploy/bundles" "$ROOT/deploy/secrets"
+          cp -R "$ROOT" release-stage
+          tar -czf "$ROOT.tar.gz" "$ROOT"
+          sha256sum "$ROOT.tar.gz" > "$ROOT.tar.gz.sha256"
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: release-stage
+          output-file: sovereign-stack.spdx.json
+          format: spdx-json
+      - name: Sign release artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE="sovereign-stack-$VERSION.tar.gz"
+          mv sovereign-stack.spdx.json "sovereign-stack-$VERSION.spdx.json"
+          cosign sign-blob --yes --bundle "$ARCHIVE.sigstore.json" "$ARCHIVE"
+          cosign sign-blob --yes --bundle release-manifest.sigstore.json release/manifest.json
+          cp release/manifest.json "sovereign-release-manifest-$VERSION.json"
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          generate_release_notes: true
+          files: |
+            sovereign-stack-*.tar.gz
+            sovereign-stack-*.tar.gz.sha256
+            sovereign-stack-*.tar.gz.sigstore.json
+            sovereign-stack-*.spdx.json
+            sovereign-release-manifest-*.json
+            release-manifest.sigstore.json

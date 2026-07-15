@@ -233,6 +233,24 @@ func (c *Client) InspectImage(ctx context.Context, ref string) (map[string]any, 
 	return out, err
 }
 
+// ExportImages streams a Docker-compatible image archive for the exact refs.
+func (c *Client) ExportImages(ctx context.Context, refs []string) (io.ReadCloser, error) {
+	query := url.Values{}
+	for _, ref := range refs {
+		query.Add("names", ref)
+	}
+	resp, err := c.do(ctx, http.MethodGet, "/images/get", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("docker image export: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+	}
+	return resp.Body, nil
+}
+
 // RunJob creates and starts a one-shot container. Everything except env
 // values comes from the validated allowlist configuration.
 func (c *Client) RunJob(ctx context.Context, image, network string, binds, env []string, cmd []string) (string, error) {

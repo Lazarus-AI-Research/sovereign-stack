@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lazarus.ai/sovereign/release-manifest.schema.json",
+  "title": "SovereignStack release manifest",
+  "type": "object",
+  "required": ["schema_version", "version", "stack_commit", "runtime_commit", "supported_profiles", "images", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
+    "stack_commit": { "$ref": "#/$defs/commit" },
+    "runtime_commit": { "$ref": "#/$defs/commit" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "supported_profiles": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "enum": ["cuda-x86_64", "metal-arm64"] }
+    },
+    "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
+    "models": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/model" } },
+    "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" } }
+  },
+  "$defs": {
+    "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "image": {
+      "type": "object",
+      "required": ["name", "reference", "digest", "platforms", "first_party"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "reference": { "type": "string" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "platforms": { "type": "array", "minItems": 1, "items": { "enum": ["linux/amd64", "linux/arm64"] } },
+        "first_party": { "type": "boolean" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": ["id", "repository", "revision", "profiles"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "repository": { "type": "string" },
+        "revision": { "$ref": "#/$defs/commit" },
+        "artifact": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "profiles": { "type": "array", "items": { "enum": ["cuda-x86_64", "metal-arm64"] } },
+        "role": { "enum": ["generation", "embedding"] },
+        "modalities": { "type": "array", "items": { "enum": ["text", "image", "audio", "video"] } }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": ["name", "sha256", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "signature": { "type": "string" },
+        "sbom": { "type": "string" }
+      }
+    }
+  }
+}

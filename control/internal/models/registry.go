@@ -12,11 +12,19 @@ import (
 )
 
 type Entry struct {
-	ID       string `yaml:"id" json:"id"`
-	Role     string `yaml:"role" json:"role"`
-	Source   string `yaml:"source" json:"source"`
-	Model    string `yaml:"model" json:"model"`
-	Revision string `yaml:"revision" json:"revision"`
+	ID                 string   `yaml:"id" json:"id"`
+	Role               string   `yaml:"role" json:"role"`
+	Source             string   `yaml:"source" json:"source"`
+	Model              string   `yaml:"model" json:"model"`
+	Revision           string   `yaml:"revision,omitempty" json:"revision,omitempty"`
+	Artifact           string   `yaml:"artifact,omitempty" json:"artifact,omitempty"`
+	SHA256             string   `yaml:"sha256,omitempty" json:"sha256,omitempty"`
+	BaseURL            string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	CredentialID       string   `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
+	Provider           string   `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Capabilities       []string `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	CompatibleProfiles []string `yaml:"compatible_profiles,omitempty" json:"compatible_profiles,omitempty"`
+	ValidationState    string   `yaml:"validation_state,omitempty" json:"validation_state,omitempty"`
 }
 
 func (e Entry) validate() error {
@@ -29,9 +37,21 @@ func (e Entry) validate() error {
 		return fmt.Errorf("unknown role %q", e.Role)
 	}
 	switch e.Source {
-	case "huggingface", "modelscope", "local", "remote":
+	case "huggingface", "modelscope", "local", "offline", "remote", "cloud":
 	default:
 		return fmt.Errorf("unknown source %q", e.Source)
+	}
+	if (e.Source == "huggingface" || e.Source == "modelscope") && e.Revision == "" {
+		return fmt.Errorf("source %q requires an immutable revision", e.Source)
+	}
+	if (e.Source == "remote" || e.Source == "cloud") && e.Provider == "" {
+		return fmt.Errorf("source %q requires a provider", e.Source)
+	}
+	if e.Source == "remote" && e.BaseURL == "" {
+		return fmt.Errorf("remote models require base_url")
+	}
+	if e.ValidationState == "" {
+		e.ValidationState = "unvalidated"
 	}
 	return nil
 }
@@ -134,6 +154,24 @@ func (r *Registry) Update(id string, patch map[string]string) (Entry, error) {
 		}
 		if v, ok := patch["source"]; ok {
 			entry.Source = v
+		}
+		if v, ok := patch["artifact"]; ok {
+			entry.Artifact = v
+		}
+		if v, ok := patch["sha256"]; ok {
+			entry.SHA256 = v
+		}
+		if v, ok := patch["base_url"]; ok {
+			entry.BaseURL = v
+		}
+		if v, ok := patch["credential_id"]; ok {
+			entry.CredentialID = v
+		}
+		if v, ok := patch["provider"]; ok {
+			entry.Provider = v
+		}
+		if v, ok := patch["validation_state"]; ok {
+			entry.ValidationState = v
 		}
 		if err := entry.validate(); err != nil {
 			return Entry{}, err

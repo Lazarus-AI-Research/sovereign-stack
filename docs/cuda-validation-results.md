@@ -1,6 +1,6 @@
 # CUDA Validation Results — Lazarus Sovereign Stack runtime (quixi-3090-02)
 
-Status as of 2026-07-13. Box: 8× RTX 3090 (24GB); all appliance runs use
+Status as of 2026-07-15. Box: 8× RTX 3090 (24GB); all appliance runs use
 `CUDA_VISIBLE_DEVICES=0` — single-GPU is the product topology. Stack:
 `~/svenv` with vLLM 0.25.0 CUDA wheels, `-e ~/sovereign-vllm` (Lazarus
 overlay), `-e ~/SovereignStack/evals`. Runner: `~/run-cuda-validation.sh
@@ -13,6 +13,10 @@ single|multi`; all reports land in `~/cuda-validation/`.
 | Single-role conformance (gemma generation only) | **13 passed / 1 skipped** (embedding disabled by config) | `conformance-cuda-single.json` |
 | M12 multimodal embedding validation (LCO alone, port 8976) | **16/16** — text, image, audio | `mm-validation.json` (harness: `validate-mm.py`) |
 | Multi-role conformance (gemma + LCO, one process) | **14/14** — both roles healthy, zero skips | `conformance-cuda-multi.json` |
+| v0.1.0-rc.1 appliance smoke | **14/14** — direct runtime, gateway, all three embedding modalities, pgvector, metrics | `smoke-20260715-041107.json` |
+| Full benchmark | **8/8** — serial/concurrent generation, embedding batches, mixed workload, retrieval | `full-20260715-043641.json` |
+| Mixed-role pressure | **6/6** — balanced, generation-heavy, embedding-heavy, post-pressure probes | `mixed-role-20260715-043707.json` |
+| Omni embedding | **5/5** — text/image/audio, cross-modal ranking, pgvector | `omni-embedding-20260715-043651.json` |
 
 Models are the locked user decisions: generation `google/gemma-4-E2B-it`
 (alias `assistant-large`), embedding
@@ -70,7 +74,7 @@ not on `PATH`, and `shutil.which('ninja')` returns `None`.
 **Fix:** `lazarus/appliance/launcher.py` prepends `sys.executable`'s bin
 dir to `PATH` before the engine subprocess is spawned, so the appliance
 finds its own bundled toolchain regardless of launch context. Commit
-`611fcff` in `~/sovereign-vllm`.
+`9fbc25b` in `~/sovereign-vllm`.
 
 ### 2. The M12 bug: LCO fails to load as a pooling model
 
@@ -90,11 +94,11 @@ couldn't suppress it: the failure was in the fallback backend's processor
 plumbing, not in multimodal budgeting.
 
 **Fix (fully out of tree — see "M12 plugin approach"):** register the
-thinker arch onto vLLM's *native* omni-thinker model. Commit `ff4b419`.
+thinker arch onto vLLM's *native* omni-thinker model. Commit `29b3fcc`.
 
 ### Related fix found on the way (worth knowing about)
 
-`848ce92`: vLLM 0.25 renamed `--override-pooler-config` →
+`d3c6656`: vLLM 0.25 renamed `--override-pooler-config` →
 `--pooler-config` and `PoolerConfig.normalize` → `use_activation`. The
 appliance's unknown-flag filter silently dropped the old spelling, so the
 role config's `pooling: last` / `normalization: l2` never reached the
@@ -114,7 +118,7 @@ hundreds of threads.
 
 **Fix:** the appliance defaults `VLLM_WORKER_MULTIPROC_METHOD=spawn` before
 vLLM is imported. An explicit operator setting is still respected.
-Commit `b5af671` in `~/sovereign-vllm`.
+Commit `0abc45d` in `~/sovereign-vllm`.
 
 ## The M12 plugin approach
 
@@ -140,7 +144,7 @@ patches needed for this feature.
    `dtype=auto` resolves correctly. The appliance backend injects it for
    embedding roles because callables can't be passed through CLI argv.
 
-3. **Extended `/v1/embeddings` schema** (commit `8070bd2`, per the runtime
+3. **Extended `/v1/embeddings` schema** (commit `9d8deeb`, per the runtime
    contract): media arrives as a chat-style `messages` array (alternative
    to OpenAI `input`), **base64 data URIs only** — any remote URL is
    rejected 400 at the API layer. The manifest advertises an embedding
@@ -148,7 +152,7 @@ patches needed for this feature.
    round-trips with the same dimensionality the text probe established
    (contract §10.1: probed, never assumed).
 
-4. **Audio dependencies** (commit `66e3484`): declared as a project extra
+4. **Audio dependencies** (commit `ba372db`): declared as a project extra
    using `soundfile` + `soxr` instead of `vllm[audio]`, because
    `vllm[audio]` pulls torchcodec, which dlopens system ffmpeg libs and
    raises `OSError` on import on no-root hosts (vLLM only guards
@@ -162,11 +166,9 @@ patches needed for this feature.
   because modalities are probed, not assumed.
 - **Multi-GPU topologies**: untested; single-GPU (`CUDA_VISIBLE_DEVICES=0`)
   is the product topology and the only one validated here.
-- **No load/soak testing on CUDA**: conformance and the 16-check
-  multimodal suite are functional gates; sustained concurrency,
-  generation-queue throttling of the embedding role
-  (`throttle_when_generation_queue_above`), and long-run memory stability
-  were not exercised under load.
+- **No prolonged soak testing on CUDA**: the full and mixed-role pressure
+  suites exercise concurrent generation and embedding and remain healthy
+  afterward, but multi-hour memory stability is not yet a release gate.
 - **`VLLM_BACKEND=cuda` warning**: vLLM reports the appliance selector as an
   unknown vLLM environment variable. The warning is cosmetic, but the
   variable itself is required until the adapter's backend selector is moved

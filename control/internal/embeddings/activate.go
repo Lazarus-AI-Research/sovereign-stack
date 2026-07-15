@@ -103,7 +103,7 @@ func (d ActivateDeps) rewriteEmbeddingRole(profile Profile) error {
 	}
 	role["enabled"] = true
 	role["task"] = "embed"
-	role["source"] = "huggingface"
+	role["source"] = profile.Source
 	role["model"] = profile.Model
 	role["served_model_name"] = profile.ServedModelName
 	if profile.Revision != "" {

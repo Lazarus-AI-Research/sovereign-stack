@@ -99,6 +99,15 @@ type KeyRequest struct {
 	Alias     string   `json:"key_alias,omitempty"`
 	Models    []string `json:"models,omitempty"`
 	MaxBudget *float64 `json:"max_budget,omitempty"`
+	TPMLimit  *int64   `json:"tpm_limit,omitempty"`
+	RPMLimit  *int64   `json:"rpm_limit,omitempty"`
+	Duration  string   `json:"duration,omitempty"`
+}
+
+type BudgetUpdate struct {
+	MaxBudget *float64 `json:"max_budget,omitempty"`
+	TPMLimit  *int64   `json:"tpm_limit,omitempty"`
+	RPMLimit  *int64   `json:"rpm_limit,omitempty"`
 }
 
 // GenerateKey creates a scoped virtual key via LiteLLM's management API.
@@ -112,5 +121,27 @@ func (c *Client) GenerateKey(ctx context.Context, request KeyRequest) (map[strin
 func (c *Client) ListKeys(ctx context.Context) (map[string]any, error) {
 	var out map[string]any
 	err := c.get(ctx, "/key/list", &out)
+	return out, err
+}
+
+// UpdateBudget updates the basic open-source virtual-key quota fields.
+func (c *Client) UpdateBudget(ctx context.Context, key string, update BudgetUpdate) (map[string]any, error) {
+	payload := map[string]any{"key": key}
+	raw, _ := json.Marshal(update)
+	_ = json.Unmarshal(raw, &payload)
+	var out map[string]any
+	err := c.post(ctx, "/key/update", payload, &out)
+	return out, err
+}
+
+func (c *Client) DeleteKey(ctx context.Context, key string) error {
+	return c.post(ctx, "/key/delete", map[string]any{"keys": []string{key}}, nil)
+}
+
+// Usage returns LiteLLM's aggregate spend view. Local models normally report
+// zero monetary cost while token/request counts remain available in traces.
+func (c *Client) Usage(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	err := c.get(ctx, "/global/spend", &out)
 	return out, err
 }

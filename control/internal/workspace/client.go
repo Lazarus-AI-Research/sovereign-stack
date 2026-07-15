@@ -18,12 +18,101 @@ import (
 )
 
 type Client struct {
-	base string
-	http *http.Client
+	base       string
+	adminBase  string
+	adminToken string
+	http       *http.Client
 }
 
 func New(baseURL string) *Client {
 	return &Client{base: baseURL, http: &http.Client{Timeout: 60 * time.Second}}
+}
+
+func NewWithIndexAdmin(baseURL, adminBase, token string) *Client {
+	return &Client{
+		base: baseURL, adminBase: adminBase, adminToken: token,
+		http: &http.Client{Timeout: 24 * time.Hour},
+	}
+}
+
+type RebuildRequest struct {
+	WorkspaceSlug    string `json:"workspace_slug"`
+	IndexVersion     string `json:"index_version"`
+	QueryPrefix      string `json:"query_prefix,omitempty"`
+	DocumentPrefix   string `json:"document_prefix,omitempty"`
+	PreprocessingVer string `json:"preprocessing_version"`
+}
+
+type RebuildResult struct {
+	WorkspaceSlug      string   `json:"workspace_slug"`
+	IndexVersion       string   `json:"index_version"`
+	DocumentCount      int      `json:"document_count"`
+	ProcessedDocuments int      `json:"processed_documents"`
+	VectorCount        int64    `json:"vector_count"`
+	Failures           []string `json:"failures"`
+}
+
+type Workspace struct {
+	ID         string `json:"id"`
+	UpstreamID int    `json:"upstream_id"`
+	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+}
+
+func (c *Client) Workspaces(ctx context.Context) ([]Workspace, error) {
+	if c.adminBase == "" || c.adminToken == "" {
+		return nil, fmt.Errorf("workspace index administration is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.adminBase+"/internal/indexes/workspaces", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.adminToken)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("workspace list: %s: %s", resp.Status, raw)
+	}
+	var result struct {
+		Workspaces []Workspace `json:"workspaces"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	return result.Workspaces, err
+}
+
+func (c *Client) RebuildIndex(ctx context.Context, request RebuildRequest) (RebuildResult, error) {
+	var result RebuildResult
+	if c.adminBase == "" || c.adminToken == "" {
+		return result, fmt.Errorf("workspace index administration is not configured")
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return result, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.adminBase+"/internal/indexes/rebuild", bytes.NewReader(payload))
+	if err != nil {
+		return result, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return result, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return result, fmt.Errorf("workspace index rebuild: %s: %s", resp.Status, raw)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (c *Client) Reachable(ctx context.Context) bool {

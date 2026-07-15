@@ -6,9 +6,9 @@ specific **enterprise-gated features** (license key required at runtime).
 This inventory must be re-verified against the pinned LiteLLM version at
 every version bump and before each release (M16 gate).
 
-Pinned image: see `LITELLM_IMAGE` in `deploy/.env.example`.
-**TODO before release: pin an immutable tag and re-verify every row below
-against that exact version's docs/source.**
+Pinned image: LiteLLM v1.91.2, source revision
+`6950a52a151e606a5e535170d2c9f6bf263593cf`, at the immutable digest recorded
+as `LITELLM_IMAGE` in `deploy/.env.example`.
 
 ## Features Sovereign Stack uses
 
@@ -21,7 +21,7 @@ against that exact version's docs/source.**
 | Rate limiting (tpm/rpm per key) | Planned (§2.2) | Open source (basic) — verify tier for per-team limits |
 | DB-backed config (`DATABASE_URL`) | Key/spend persistence in the `litellm` database | Open source |
 | `drop_params` | §15 config | Open source |
-| Prometheus `/metrics` | Sovereign Observe scraping | **Historically enterprise-gated** — verify at pin; if gated, scrape gateway health only and derive usage from DB spend logs instead |
+| Prometheus `/metrics` | Not used; Control exports gateway health and the product reads open-source spend APIs | No enterprise dependency |
 | Request timeout settings | §15 config | Open source |
 
 ## Enterprise features we must NOT depend on (unless licensed)
@@ -43,4 +43,4 @@ against that exact version's docs/source.**
 
 | Verified against version | Date | Verifier | Notes |
 | --- | --- | --- | --- |
-| _(pending pin)_ | — | — | Initial inventory drafted from general LiteLLM licensing structure; row-by-row verification required at pin time. |
+| v1.91.2 / `6950a52` | 2026-07-14 | release review | `/key/generate`, `/key/list`, `/key/update`, `/key/delete`, and `/global/spend` are present in the open-source proxy source; the LiteLLM UI and enterprise router are not exposed or required. |

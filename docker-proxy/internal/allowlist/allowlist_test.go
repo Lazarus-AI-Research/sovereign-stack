@@ -83,6 +83,20 @@ func TestEvalsImageMustBeEvalsImage(t *testing.T) {
 	}
 }
 
+func TestExportAllowsOnlyFirstPartyOrExactPins(t *testing.T) {
+	config := testConfig()
+	config.AllowedExportImages = []string{"caddy@sha256:exact"}
+	if !config.ExportImageAllowed("ghcr.io/lazarus-ai-research/sovereign-control:0.1.0").Allowed {
+		t.Fatal("first-party image should be exportable")
+	}
+	if !config.ExportImageAllowed("caddy@sha256:exact").Allowed {
+		t.Fatal("exact third-party pin should be exportable")
+	}
+	if config.ExportImageAllowed("caddy:latest").Allowed {
+		t.Fatal("mutable third-party image should be rejected")
+	}
+}
+
 func TestLoadValidatesRequiredFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "allowlist.yaml")

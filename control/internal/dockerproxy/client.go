@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -91,6 +92,49 @@ func (c *Client) Logs(ctx context.Context, service string, tail int) (string, er
 
 func (c *Client) Pull(ctx context.Context, image string) error {
 	return c.do(ctx, http.MethodPost, "/internal/docker/images/pull", map[string]string{"image": image}, nil)
+}
+
+// ExportImages writes a Docker-compatible archive through the restricted
+// proxy. The proxy independently validates every reference against its export
+// allowlist.
+func (c *Client) ExportImages(ctx context.Context, images []string, destination string) error {
+	payload, err := json.Marshal(map[string]any{"images": images})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/internal/docker/images/export", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	client := *c.http
+	client.Timeout = 0 // multi-gigabyte image exports legitimately take minutes
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("docker proxy image export: %s: %s", resp.Status, raw)
+	}
+	temporary := destination + ".tmp"
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(file, resp.Body)
+	closeErr := file.Close()
+	if copyErr != nil {
+		os.Remove(temporary)
+		return copyErr
+	}
+	if closeErr != nil {
+		os.Remove(temporary)
+		return closeErr
+	}
+	return os.Rename(temporary, destination)
 }
 
 func (c *Client) RunEvals(ctx context.Context, image, suite string) (string, error) {

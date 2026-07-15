@@ -6,6 +6,18 @@ allowed_project: sovereign-stack
 allowed_image_prefixes:
   - ghcr.io/lazarus-ai-research/
 
+# Exact third-party pins that may be exported into an offline bundle. Export
+# accepts these plus allowed_image_prefixes; pull remains first-party-only.
+allowed_export_images:
+  - caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
+  - ghcr.io/berriai/litellm@sha256:f46d672e9d12a84e5dde046ff3865e0bf323e49f9f9b8eb08cd33c1713ea9627
+  - pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+  - arizephoenix/phoenix@sha256:0826e5c6247d012bf8cfb58df5dd9778b26ebb7f9b1afac577a8e0bb3d83606f
+  - prom/prometheus@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+  - grafana/grafana@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+  - grafana/loki@sha256:70b9f699fc9bb868b62f1cfd4f787dfa50242f1fd92e6089787d5d7daea75fe8
+  - otel/opentelemetry-collector-contrib@sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
+
 allowed_services:
   - sovereign-runtime
   - sovereign-gateway
@@ -20,6 +32,7 @@ allowed_operations:
   - logs
   - run-evals
   - backup
+  - export
 
 # The evals container the proxy may create. Nothing here is caller-controlled
 # except the suite name; env values come from the proxy's own environment.
@@ -40,7 +53,7 @@ evals:
 # Fixed database dump/restore container (§18.11). The script is proxy-code-
 # fixed; only the validated backup stamp is caller-controlled.
 backup:
-  image: pgvector/pgvector:pg16
+  image: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
   network: sovereign
   binds:
     - ${DEPLOY_ROOT}/backups:/backups

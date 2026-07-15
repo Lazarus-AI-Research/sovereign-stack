@@ -9,15 +9,14 @@ name: sovereign-stack
 
 services:
   caddy:
-    image: caddy:2
+    image: ${CADDY_IMAGE}
     container_name: sovereign-caddy
     restart: unless-stopped
     depends_on:
       - sovereign-control
       - sovereign-workspace
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${SOVEREIGN_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8880}:80"
     volumes:
       - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./branding:/srv/branding:ro
@@ -29,6 +28,10 @@ services:
   sovereign-control:
     image: ${SOVEREIGN_CONTROL_IMAGE}
     container_name: sovereign-control
+    # Match the installer owner so owner-only host secrets remain 0600 while
+    # still being readable by the otherwise non-root Control process. This
+    # also keeps reports, backups, and config edits owned by the host user.
+    user: "${SOVEREIGN_HOST_UID:?installer must set SOVEREIGN_HOST_UID}:${SOVEREIGN_HOST_GID:?installer must set SOVEREIGN_HOST_GID}"
     restart: unless-stopped
     depends_on:
       postgres:
@@ -44,8 +47,11 @@ services:
       PROMETHEUS_BASE_URL: http://prometheus:9090
       PHOENIX_BASE_URL: http://phoenix:6006
       LOKI_BASE_URL: http://loki:3100
+      WORKSPACE_INDEX_ADMIN_URL: http://sovereign-workspace:3011
+      LITELLM_CONFIG_PATH: ${LITELLM_CONFIG_PATH:-/sovereign/config/litellm/config.yaml}
     volumes:
       - ./:/sovereign
+      - ${SOVEREIGN_RELEASE_ROOT:-.}:/sovereign-release:ro
     expose:
       - "8080"
     networks:
@@ -73,11 +79,14 @@ services:
       - sovereign
 
   sovereign-workspace:
-    image: mintplexlabs/anythingllm:${ANYTHINGLLM_VERSION}
+    image: ${SOVEREIGN_WORKSPACE_IMAGE}
     container_name: sovereign-workspace
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      SOVEREIGN_VERSIONED_INDEXES: "true"
+      SOVEREIGN_INDEX_ADMIN_PORT: "3011"
     volumes:
       - anythingllm_data:/app/server/storage
       - ./branding:/sovereign-branding:ro
@@ -88,6 +97,7 @@ services:
       - ./config/workspace/index.css:/app/server/public/index.css:ro
     expose:
       - "3001"
+      - "3011"
     networks:
       - sovereign
 
@@ -110,7 +120,7 @@ services:
       - --port
       - "4000"
     volumes:
-      - ./config/litellm/config.yaml:/app/config.yaml:ro
+      - ${LITELLM_CONFIG_HOST_PATH:-./config/litellm/config.yaml}:/app/config.yaml:ro
     expose:
       - "4000"
     networks:
@@ -144,7 +154,7 @@ services:
       - sovereign
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: ${PGVECTOR_IMAGE}
     container_name: sovereign-postgres
     restart: unless-stopped
     environment:
@@ -165,7 +175,7 @@ services:
       - sovereign
 
   phoenix:
-    image: arizephoenix/phoenix:${PHOENIX_VERSION}
+    image: ${PHOENIX_IMAGE}
     container_name: sovereign-phoenix
     restart: unless-stopped
     depends_on:
@@ -182,7 +192,7 @@ services:
       - sovereign
 
   prometheus:
-    image: prom/prometheus:${PROMETHEUS_VERSION}
+    image: ${PROMETHEUS_IMAGE}
     container_name: sovereign-prometheus
     restart: unless-stopped
     volumes:
@@ -194,7 +204,7 @@ services:
       - sovereign
 
   grafana:
-    image: grafana/grafana:${GRAFANA_VERSION}
+    image: ${GRAFANA_IMAGE}
     container_name: sovereign-grafana
     restart: unless-stopped
     volumes:
@@ -207,7 +217,7 @@ services:
       - sovereign
 
   loki:
-    image: grafana/loki:${LOKI_VERSION}
+    image: ${LOKI_IMAGE}
     container_name: sovereign-loki
     restart: unless-stopped
     command:
@@ -221,7 +231,7 @@ services:
       - sovereign
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:${OTEL_VERSION}
+    image: ${OTEL_IMAGE}
     container_name: sovereign-otel
     restart: unless-stopped
     command:

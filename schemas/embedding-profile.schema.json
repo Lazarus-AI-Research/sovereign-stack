@@ -1,7 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/embedding-profile.schema.json",
-  "title": "Sovereign Embedding Profile",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "title": "Sovereign embedding profiles",
+  "type": "object",
+  "required": ["embedding_profiles"],
+  "additionalProperties": false,
+  "properties": {
+    "embedding_profiles": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/profile" }
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "required": ["provider", "source", "model", "revision", "served_model_name", "normalization", "distance_metric", "preprocessing_version", "modalities"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "source": { "enum": ["huggingface", "modelscope", "local", "offline"] },
+        "model": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "artifact": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "served_model_name": { "type": "string", "minLength": 1 },
+        "pooling": { "enum": ["last", "mean", "cls"] },
+        "normalization": { "enum": ["l2", "none"] },
+        "distance_metric": { "enum": ["cosine", "l2", "inner_product"] },
+        "query_prefix": { "type": "string" },
+        "document_prefix": { "type": "string" },
+        "chunking_strategy": { "type": "string", "minLength": 1 },
+        "preprocessing_version": { "type": "string", "minLength": 1 },
+        "modalities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["text", "image", "audio", "video"] }
+        }
+      }
+    }
+  }
 }

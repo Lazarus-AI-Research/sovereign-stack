@@ -19,6 +19,8 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/backups"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/bundles"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/credentials"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
@@ -57,6 +59,9 @@ type Server struct {
 	// Models and Jobs enable §18.5 endpoints when non-nil.
 	Models *models.Registry
 	Jobs   *jobs.Runner
+	// Credentials is the encrypted provider-secret vault. API responses expose
+	// metadata only; gateway regeneration is the sole decryption consumer.
+	Credentials *credentials.Store
 	// Reports is the evals report directory (§18.10); empty disables.
 	Reports string
 	// Profiles enables §18.6; Indexes enables §18.7.
@@ -69,6 +74,8 @@ type Server struct {
 	Features *branding.Store
 	// Backups enables §18.11.
 	Backups *backups.Deps
+	// Bundles enables same-platform offline bundle creation and download.
+	Bundles *bundles.Deps
 	// Workspace enables §18.9 (branding apply, status).
 	Workspace *workspace.Client
 	// SovereignRoot is the deploy mount (branding asset paths root here).
@@ -346,14 +353,11 @@ func (s *Server) Handler() http.Handler {
 			}
 			out := make([]map[string]any, 0, len(entries))
 			for _, entry := range entries {
-				out = append(out, map[string]any{
-					"id":       entry.ID,
-					"role":     entry.Role,
-					"source":   entry.Source,
-					"model":    entry.Model,
-					"revision": entry.Revision,
-					"loaded":   loaded[entry.Role] == entry.Model,
-				})
+				raw, _ := json.Marshal(entry)
+				var item map[string]any
+				_ = json.Unmarshal(raw, &item)
+				item["loaded"] = loaded[entry.Role] == entry.Model
+				out = append(out, item)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"models": out})
 		})
@@ -372,6 +376,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.HandleFunc("POST "+p("/models/local"), addModel)
 		mux.HandleFunc("POST "+p("/models/remote"), addModel)
+		mux.HandleFunc("POST "+p("/models"), addModel)
 
 		mux.HandleFunc("PATCH "+p("/models/{id}"), func(w http.ResponseWriter, r *http.Request) {
 			var patch map[string]string
@@ -398,8 +403,25 @@ func (s *Server) Handler() http.Handler {
 		if s.Jobs != nil {
 			mux.HandleFunc("POST "+p("/models/{id}/load"), func(w http.ResponseWriter, r *http.Request) {
 				modelID := r.PathValue("id")
-				if _, err := s.Models.Get(modelID); err != nil {
+				entry, err := s.Models.Get(modelID)
+				if err != nil {
 					errorJSON(w, http.StatusNotFound, err.Error())
+					return
+				}
+				if entry.Source == "remote" || entry.Source == "cloud" {
+					if s.GatewayConfigPath == "" {
+						errorJSON(w, http.StatusServiceUnavailable, "gateway configuration is unavailable")
+						return
+					}
+					if err := gateway.GenerateConfig(r.Context(), s.GatewayConfigPath, s.Models, s.Profiles, s.Credentials); err != nil {
+						errorJSON(w, http.StatusUnprocessableEntity, err.Error())
+						return
+					}
+					if err := s.Proxy.Restart(r.Context(), "sovereign-gateway"); err != nil {
+						errorJSON(w, http.StatusBadGateway, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusAccepted, map[string]string{"model_id": modelID, "restarting": "sovereign-gateway"})
 					return
 				}
 				// §2.9: warn, never block.
@@ -413,7 +435,57 @@ func (s *Server) Handler() http.Handler {
 					"warning": "This model has not been validated on the selected runtime profile. Loading may fail, consume excessive memory, or perform poorly. Run a smoke test after loading.",
 				})
 			})
+			mux.HandleFunc("POST "+p("/models/{id}/smoke-test"), func(w http.ResponseWriter, r *http.Request) {
+				if _, err := s.Models.Get(r.PathValue("id")); err != nil {
+					errorJSON(w, http.StatusNotFound, err.Error())
+					return
+				}
+				jobID, err := s.Jobs.Enqueue(r.Context(), "evals-run", map[string]string{"suite": "smoke"})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID, "model_id": r.PathValue("id"), "suite": "smoke"})
+			})
 		}
+	}
+
+	// ── encrypted provider credentials ──────────────────────────────────
+
+	if s.Credentials != nil {
+		mux.HandleFunc("GET "+p("/provider-credentials"), func(w http.ResponseWriter, r *http.Request) {
+			items, err := s.Credentials.List(r.Context())
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, "credential metadata unavailable")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"credentials": items})
+		})
+		putCredential := func(w http.ResponseWriter, r *http.Request) {
+			var request credentials.PutRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				errorJSON(w, http.StatusBadRequest, "invalid credential")
+				return
+			}
+			if id := r.PathValue("id"); id != "" {
+				request.ID = id
+			}
+			item, err := s.Credentials.Put(r.Context(), request)
+			if err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+		}
+		mux.HandleFunc("POST "+p("/provider-credentials"), putCredential)
+		mux.HandleFunc("PUT "+p("/provider-credentials/{id}"), putCredential)
+		mux.HandleFunc("DELETE "+p("/provider-credentials/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			if err := s.Credentials.Delete(r.Context(), r.PathValue("id")); err != nil {
+				errorJSON(w, http.StatusNotFound, "credential not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"deleted": r.PathValue("id")})
+		})
 	}
 
 	// ── jobs ─────────────────────────────────────────────────────────────
@@ -445,7 +517,27 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST "+p("/evals/smoke"), runSuite("smoke"))
 		mux.HandleFunc("POST "+p("/evals/benchmark/quick"), runSuite("quick"))
 		mux.HandleFunc("POST "+p("/evals/benchmark/full"), runSuite("full"))
+		mux.HandleFunc("POST "+p("/evals/embedding"), runSuite("embedding"))
 		mux.HandleFunc("POST "+p("/evals/retrieval"), runSuite("retrieval"))
+		mux.HandleFunc("POST "+p("/evals/mixed-role"), runSuite("mixed-role"))
+		mux.HandleFunc("POST "+p("/evals/suite"), func(w http.ResponseWriter, r *http.Request) {
+			var request struct {
+				Suite string `json:"suite"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				errorJSON(w, http.StatusBadRequest, "suite is required")
+				return
+			}
+			allowed := map[string]bool{
+				"smoke": true, "quick": true, "full": true, "embedding": true,
+				"retrieval": true, "mixed-role": true, "omni-embedding": true,
+			}
+			if !allowed[request.Suite] {
+				errorJSON(w, http.StatusBadRequest, "unknown evaluation suite")
+				return
+			}
+			runSuite(request.Suite)(w, r)
+		})
 	}
 
 	if s.Reports != "" {
@@ -622,6 +714,48 @@ func (s *Server) Handler() http.Handler {
 			writeJSON(w, http.StatusCreated, version)
 		})
 
+		if s.Jobs != nil && s.Profiles != nil {
+			mux.HandleFunc("POST "+p("/indexes/rebuild"), func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					WorkspaceID      string `json:"workspace_id"`
+					ProviderSlug     string `json:"provider_slug"`
+					EmbeddingProfile string `json:"embedding_profile"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					errorJSON(w, http.StatusBadRequest, "workspace_id, provider_slug, and embedding_profile are required")
+					return
+				}
+				profile, err := s.Profiles.Get(request.EmbeddingProfile)
+				if err != nil {
+					errorJSON(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				target, err := s.Indexes.CreatePending(r.Context(), indexes.CreateRequest{
+					WorkspaceID: request.WorkspaceID, ProviderSlug: request.ProviderSlug,
+					ProfileID: request.EmbeddingProfile, ModelID: profile.Model,
+					ModelRevision: profile.Revision, Normalization: profile.Normalization,
+					DistanceMetric: profile.DistanceMetric, QueryPrefix: profile.QueryPrefix,
+					DocumentPrefix: profile.DocumentPrefix, ChunkingStrategy: profile.ChunkingStrategy,
+					PreprocessingVersion: profile.PreprocessingVersion,
+				})
+				if err != nil {
+					errorJSON(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				jobID, err := s.Jobs.Enqueue(r.Context(), "index-rebuild", indexes.RebuildPayload{
+					TargetIndexID: target.ID, ActivateWhenComplete: true,
+				})
+				if err != nil {
+					_ = s.Indexes.Fail(r.Context(), target.ID, err)
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]any{
+					"job_id": jobID, "target_index_id": target.ID, "status": "building", "maintenance_mode": true,
+				})
+			})
+		}
+
 		mux.HandleFunc("GET "+p("/indexes/{id}"), func(w http.ResponseWriter, r *http.Request) {
 			version, err := s.Indexes.Get(r.Context(), r.PathValue("id"))
 			if err != nil {
@@ -649,11 +783,58 @@ func (s *Server) Handler() http.Handler {
 		})
 
 		mux.HandleFunc("POST "+p("/indexes/{id}/rebuild"), func(w http.ResponseWriter, r *http.Request) {
-			// The re-embedding pipeline requires the real embedding runtime
-			// and the workspace's chunk store; lands with the remainder of
-			// the index-lifecycle milestone.
-			errorJSON(w, http.StatusNotImplemented,
-				"index rebuild is not implemented yet; create a new index version and re-ingest, then activate it")
+			if s.Jobs == nil || s.Profiles == nil {
+				errorJSON(w, http.StatusServiceUnavailable, "index rebuild jobs are unavailable")
+				return
+			}
+			source, err := s.Indexes.Get(r.Context(), r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "source index not found")
+				return
+			}
+			var request struct {
+				EmbeddingProfile     string `json:"embedding_profile"`
+				ActivateWhenComplete *bool  `json:"activate_when_complete"`
+			}
+			if r.Body != nil {
+				_ = json.NewDecoder(r.Body).Decode(&request)
+			}
+			if request.EmbeddingProfile == "" {
+				request.EmbeddingProfile = source.ProfileID
+			}
+			profile, err := s.Profiles.Get(request.EmbeddingProfile)
+			if err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			target, err := s.Indexes.CreatePending(r.Context(), indexes.CreateRequest{
+				WorkspaceID: source.WorkspaceID, ProviderSlug: source.ProviderSlug,
+				ProfileID: request.EmbeddingProfile, ModelID: profile.Model,
+				ModelRevision: profile.Revision, Normalization: profile.Normalization,
+				DistanceMetric: profile.DistanceMetric, QueryPrefix: profile.QueryPrefix,
+				DocumentPrefix: profile.DocumentPrefix, ChunkingStrategy: profile.ChunkingStrategy,
+				PreprocessingVersion: profile.PreprocessingVersion,
+			})
+			if err != nil {
+				errorJSON(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			activate := true
+			if request.ActivateWhenComplete != nil {
+				activate = *request.ActivateWhenComplete
+			}
+			jobID, err := s.Jobs.Enqueue(r.Context(), "index-rebuild", indexes.RebuildPayload{
+				TargetIndexID: target.ID, ActivateWhenComplete: activate,
+			})
+			if err != nil {
+				_ = s.Indexes.Fail(r.Context(), target.ID, err)
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"job_id": jobID, "target_index_id": target.ID,
+				"status": "building", "maintenance_mode": true,
+			})
 		})
 	}
 
@@ -755,9 +936,65 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 
+	// ── §18.12 offline bundles ───────────────────────────────────────────
+
+	if s.Bundles != nil {
+		mux.HandleFunc("GET "+p("/bundles"), func(w http.ResponseWriter, r *http.Request) {
+			manifests, err := s.Bundles.List()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"bundles": manifests})
+		})
+		mux.HandleFunc("GET "+p("/bundles/{id}"), func(w http.ResponseWriter, r *http.Request) {
+			manifest, err := s.Bundles.Get(r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "bundle not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, manifest)
+		})
+		mux.HandleFunc("GET "+p("/bundles/{id}/download"), func(w http.ResponseWriter, r *http.Request) {
+			path, err := s.Bundles.ArchivePath(r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "bundle archive not found")
+				return
+			}
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(path)))
+			w.Header().Set("Content-Type", "application/gzip")
+			http.ServeFile(w, r, path)
+		})
+		if s.Jobs != nil {
+			mux.HandleFunc("POST "+p("/bundles"), func(w http.ResponseWriter, r *http.Request) {
+				var request bundles.CreatePayload
+				if r.Body != nil {
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+						errorJSON(w, http.StatusBadRequest, "invalid bundle request")
+						return
+					}
+				}
+				jobID, err := s.Jobs.Enqueue(r.Context(), "bundle-create", request)
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+			})
+		}
+	}
+
 	// ── §18.9 workspace ──────────────────────────────────────────────────
 
 	if s.Workspace != nil {
+		mux.HandleFunc("GET "+p("/workspaces"), func(w http.ResponseWriter, r *http.Request) {
+			workspaces, err := s.Workspace.Workspaces(r.Context())
+			if err != nil {
+				errorJSON(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"workspaces": workspaces})
+		})
 		mux.HandleFunc("GET "+p("/workspace/status"), func(w http.ResponseWriter, r *http.Request) {
 			name, _ := s.Workspace.AppName(r.Context())
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -833,9 +1070,49 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusCreated, key)
 	})
 
+	mux.HandleFunc("DELETE "+p("/gateway/keys/{id}"), func(w http.ResponseWriter, r *http.Request) {
+		if err := s.Gateway.DeleteKey(r.Context(), r.PathValue("id")); err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": r.PathValue("id")})
+	})
+
+	mux.HandleFunc("GET "+p("/gateway/usage"), func(w http.ResponseWriter, r *http.Request) {
+		usage, err := s.Gateway.Usage(r.Context())
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, usage)
+	})
+
+	mux.HandleFunc("GET "+p("/gateway/budgets"), func(w http.ResponseWriter, r *http.Request) {
+		keys, err := s.Gateway.ListKeys(r.Context())
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, keys)
+	})
+
+	mux.HandleFunc("PATCH "+p("/gateway/budgets/{id}"), func(w http.ResponseWriter, r *http.Request) {
+		var update gateway.BudgetUpdate
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid budget update")
+			return
+		}
+		result, err := s.Gateway.UpdateBudget(r.Context(), r.PathValue("id"), update)
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+
 	if s.GatewayConfigPath != "" && s.Profiles != nil && s.Models != nil {
 		mux.HandleFunc("POST "+p("/gateway/config/regenerate"), func(w http.ResponseWriter, r *http.Request) {
-			if err := gateway.GenerateConfig(s.GatewayConfigPath, s.Models, s.Profiles); err != nil {
+			if err := gateway.GenerateConfig(r.Context(), s.GatewayConfigPath, s.Models, s.Profiles, s.Credentials); err != nil {
 				errorJSON(w, http.StatusInternalServerError, err.Error())
 				return
 			}

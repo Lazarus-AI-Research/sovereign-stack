@@ -34,7 +34,9 @@
               "metrics-available",
               "benchmark-generation",
               "benchmark-embedding",
-              "benchmark-mixed"
+              "benchmark-mixed",
+              "retrieval-quality",
+              "cross-modal-retrieval"
             ]
           },
           "id": {

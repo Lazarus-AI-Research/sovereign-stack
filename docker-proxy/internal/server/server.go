@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -179,6 +180,33 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"pulled": body.Image})
 		return body.Image, nil
+	}))
+
+	mux.HandleFunc("POST /internal/docker/images/export", s.audited("export", func(w http.ResponseWriter, r *http.Request) (string, error) {
+		var body struct {
+			Images []string `json:"images"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil || len(body.Images) == 0 || len(body.Images) > 32 {
+			errorJSON(w, http.StatusBadRequest, "body must contain 1-32 image references")
+			return "", fmt.Errorf("bad request")
+		}
+		for _, image := range body.Images {
+			if decision := s.Allowlist.ExportImageAllowed(image); !decision.Allowed {
+				errorJSON(w, http.StatusForbidden, decision.Reason)
+				return image, fmt.Errorf("%s", decision.Reason)
+			}
+		}
+		stream, err := s.Docker.ExportImages(r.Context(), body.Images)
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return strings.Join(body.Images, ","), err
+		}
+		defer stream.Close()
+		w.Header().Set("Content-Type", "application/x-tar")
+		if _, err := io.Copy(w, stream); err != nil {
+			return strings.Join(body.Images, ","), err
+		}
+		return fmt.Sprintf("%d images", len(body.Images)), nil
 	}))
 
 	mux.HandleFunc("POST /internal/docker/backup/run", s.audited("backup", func(w http.ResponseWriter, r *http.Request) (string, error) {

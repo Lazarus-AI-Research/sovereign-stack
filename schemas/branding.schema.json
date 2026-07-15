@@ -1,7 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/branding.schema.json",
-  "title": "Sovereign Branding",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "title": "Sovereign branding",
+  "type": "object",
+  "required": ["product_name", "company_name", "logo", "favicon", "colors"],
+  "additionalProperties": false,
+  "properties": {
+    "product_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "company_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "logo": { "type": "string", "pattern": "^/branding/" },
+    "logo_animated": { "type": "string", "pattern": "^/branding/" },
+    "favicon": { "type": "string", "pattern": "^/branding/" },
+    "colors": {
+      "type": "object",
+      "required": ["primary", "accent"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "accent": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+      }
+    }
+  }
 }

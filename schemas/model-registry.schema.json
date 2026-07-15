@@ -1,7 +1,46 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/model-registry.schema.json",
-  "title": "Sovereign Model Registry",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "title": "Sovereign model registry",
+  "type": "object",
+  "required": ["models"],
+  "additionalProperties": false,
+  "properties": {
+    "models": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/model" }
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "object",
+      "required": ["id", "role", "source", "model"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "role": { "enum": ["generation", "embedding", "vision", "audio", "rerank"] },
+        "source": { "enum": ["huggingface", "modelscope", "local", "offline", "remote", "cloud"] },
+        "model": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "artifact": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "base_url": { "type": "string", "format": "uri" },
+        "credential_id": { "type": "string" },
+        "provider": { "type": "string" },
+        "capabilities": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "compatible_profiles": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "validation_state": { "enum": ["unvalidated", "validating", "validated", "failed"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "enum": ["huggingface", "modelscope"] } } },
+          "then": { "required": ["revision"] }
+        },
+        {
+          "if": { "properties": { "source": { "enum": ["remote", "cloud"] } } },
+          "then": { "required": ["provider"] }
+        }
+      ]
+    }
+  }
 }

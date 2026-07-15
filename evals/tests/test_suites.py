@@ -21,6 +21,15 @@ def test_smoke_check_types_are_registered():
     assert not unknown
 
 
+def test_every_shipped_suite_validates_and_has_registered_checks():
+    for path in SMOKE.parent.glob("*.yaml"):
+        suite = yaml.safe_load(path.read_text())
+        assert validation_errors(suite, "eval-suite") == [], path
+        assert suite["checks"], path
+        unknown = {check["type"] for check in suite["checks"]} - set(REGISTRY)
+        assert not unknown, (path, unknown)
+
+
 def test_registry_matches_schema_enum():
     enum = set(load_schema("eval-suite")["properties"]["checks"]["items"]["properties"]["type"]["enum"])
     assert set(REGISTRY) == enum

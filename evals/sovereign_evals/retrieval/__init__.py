@@ -1,1 +1,1 @@
-"""Sovereign Evals: retrieval (scaffold)."""
+"""pgvector and retrieval-quality evaluation helpers."""

@@ -1,7 +1,32 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lazarus.ai/sovereign/feature-flags.schema.json",
-  "title": "Sovereign Feature Flags",
-  "description": "TODO: full schema (see design.md).",
-  "type": "object"
+  "title": "Sovereign feature flags",
+  "type": "object",
+  "required": ["phoenix", "tracing", "prompt_logging"],
+  "additionalProperties": false,
+  "properties": {
+    "phoenix": { "$ref": "#/$defs/enabled" },
+    "tracing": {
+      "type": "object",
+      "required": ["enabled", "metadata_only", "full_trace", "prompt_logging", "response_logging"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "metadata_only": { "type": "boolean" },
+        "full_trace": { "type": "boolean", "default": false },
+        "prompt_logging": { "type": "boolean", "default": false },
+        "response_logging": { "type": "boolean", "default": false }
+      }
+    },
+    "prompt_logging": { "$ref": "#/$defs/enabled" }
+  },
+  "$defs": {
+    "enabled": {
+      "type": "object",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": { "enabled": { "type": "boolean" } }
+    }
+  }
 }

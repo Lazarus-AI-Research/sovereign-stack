@@ -1,4 +1,4 @@
-# Sovereign Runtime configuration for the metal-arm64 profile (Phase 2:
+# Sovereign Runtime configuration for the certified metal-arm64 profile:
 # host inference agent, design.md §2.6). Models are served host-side by the
 # agent (llama.cpp on Metal); model fields here describe intent and drive
 # aliases — the agent's own config selects the GGUF artifacts.
@@ -22,22 +22,25 @@ roles:
     task: generate
     source: local
     model: google/gemma-4-E2B-it-qat-q4_0-gguf
+    revision: 69536a21d70340464240401ba38223d805f6a709
     served_model_name: assistant-large
     priority: high
-    memory_weight: 82
-    max_concurrent_requests: 4
+    memory_weight: 80
+    max_concurrent_requests: 2
+    reasoning_parser: "off"
 
   embedding:
     enabled: true
     task: embed
     source: local
-    model: marksverdhei/LCO-Embedding-Omni-3B-2605-GGUF
-    served_model_name: embedding-omni-default
+    model: nomic-ai/nomic-embed-text-v1.5-GGUF
+    revision: 0188c9bf409793f810680a5a431e7b899c46104c
+    served_model_name: embedding-text-compact
     priority: low
-    memory_weight: 18
-    max_concurrent_requests: 4
+    memory_weight: 20
+    max_concurrent_requests: 2
     throttle_when_generation_queue_above: 2
-    pooling: last
+    pooling: mean
     normalization: l2
 
 observability:

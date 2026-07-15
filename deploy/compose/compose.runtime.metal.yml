@@ -1,4 +1,4 @@
-# Runtime overlay: Apple Metal arm64 — Phase 2, host inference agent
+# Runtime overlay: Apple Metal arm64 — signed host inference agent
 # (design.md §2.6, §8.2). Inference runs host-side (launchd-managed
 # llama.cpp on Metal); the container keeps the contract unchanged.
 services:

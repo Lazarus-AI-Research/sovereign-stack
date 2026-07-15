@@ -1,4 +1,12 @@
 # Validated against schemas/eval-suite.schema.json.
 name: retrieval
 description: Retrieval evaluation against pgvector
-checks: []  # TODO (design.md §19)
+checks:
+  - type: runtime-readiness
+  - type: text-embedding
+    params: {target: gateway}
+  - type: retrieval-quality
+    id: exact-sentinel-top1
+    params: {target: gateway}
+  - type: pgvector-roundtrip
+    params: {target: gateway}
