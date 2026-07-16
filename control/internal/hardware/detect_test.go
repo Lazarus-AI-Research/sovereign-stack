@@ -67,6 +67,37 @@ func TestRocm(t *testing.T) {
 	}
 }
 
+func TestIntelXPU(t *testing.T) {
+	withProbes(t, nil, "amd64", "/dev/dri", "/sys/module/intel_gpu_top")
+	if got := first(t).Profile; got != "xpu-x86_64" {
+		t.Errorf("intel xpu: got %s", got)
+	}
+}
+
+// A Gaudi host exposes /dev/accel and no Intel GPU module; it must not be
+// mistaken for an Intel XPU host.
+func TestGaudi(t *testing.T) {
+	withProbes(t, nil, "amd64", "/dev/accel")
+	if got := first(t).Profile; got != "gaudi-x86_64" {
+		t.Errorf("gaudi: got %s", got)
+	}
+	for _, d := range Detect() {
+		if d.Profile == "xpu-x86_64" {
+			t.Error("gaudi host must not also recommend xpu-x86_64")
+		}
+	}
+}
+
+// An Intel GPU host must not be mistaken for Gaudi.
+func TestIntelGPUIsNotGaudi(t *testing.T) {
+	withProbes(t, nil, "amd64", "/dev/dri", "/sys/module/intel_gpu_top")
+	for _, d := range Detect() {
+		if d.Profile == "gaudi-x86_64" {
+			t.Error("intel gpu host must not recommend gaudi-x86_64")
+		}
+	}
+}
+
 func TestCPUFallbackAlwaysPresent(t *testing.T) {
 	withProbes(t, nil, "arm64")
 	detections := Detect()
