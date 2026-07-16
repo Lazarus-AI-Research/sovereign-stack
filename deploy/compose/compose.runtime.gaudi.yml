@@ -1,0 +1,14 @@
+# Runtime overlay: Intel Gaudi 2 / Gaudi 3 x86_64 (design.md §8.2).
+# Requires the Habana container runtime registered with the Docker daemon.
+services:
+  sovereign-runtime:
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:gaudi-x86_64-${SOVEREIGN_VERSION}
+    runtime: habana
+    ipc: host
+    cap_add:
+      - SYS_NICE
+    environment:
+      SOVEREIGN_PROFILE: gaudi-x86_64
+      VLLM_BACKEND: hpu
+      HABANA_VISIBLE_DEVICES: ${HABANA_VISIBLE_DEVICES:-all}
+      OMPI_MCA_btl_vader_single_copy_mechanism: none

@@ -44,6 +44,7 @@ The product is designed to run without Kubernetes on:
 * AMD ROCm workstations
 * AMD Strix Halo / Ryzen AI Max+ 395
 * Intel XPU systems
+* Intel Gaudi 2 / Gaudi 3 systems
 
 The primary product flow is:
 
@@ -257,6 +258,7 @@ The fork includes:
 * ROCm support
 * Strix Halo support
 * Intel XPU support
+* Intel Gaudi 2 / Gaudi 3 support
 * Apple Metal support
 * DGX Spark support
 * Runtime manifests
@@ -448,7 +450,7 @@ However, the following failures may affect all roles:
 * Process crash
 * Kernel segmentation fault
 * Accelerator reset
-* CUDA, ROCm, XPU, or Metal fatal error
+* CUDA, ROCm, XPU, Gaudi, or Metal fatal error
 * Process-level out-of-memory condition
 * Communication-library hang
 * Shared scheduler corruption
@@ -483,6 +485,7 @@ Interpretation varies by platform:
 * Apple unified memory
 * Strix Halo unified memory
 * Intel XPU memory architecture
+* Intel Gaudi on-package HBM
 * DGX Spark unified memory
 
 The runtime must report actual observed memory behavior through metrics.
@@ -776,9 +779,9 @@ The proxy is internal-only and has no user interface.
 │ /v1/embeddings       → omni embedding role             │
 └───────┬──────────────────────────────────────────────────┘
         │
-┌───────▼──────────────────────────────────────────────────┐
-│ CUDA / ROCm / XPU / Metal / DGX Spark / Strix Halo      │
-└──────────────────────────────────────────────────────────┘
+┌───────▼────────────────────────────────────────────────────┐
+│ CUDA / ROCm / XPU / Gaudi / Metal / DGX Spark / Strix Halo │
+└────────────────────────────────────────────────────────────┘
 
 Persistent services:
   PostgreSQL + pgvector
@@ -814,6 +817,7 @@ sovereign-stack/
     compose.runtime.rocm.yml
     compose.runtime.strix-halo.yml
     compose.runtime.xpu.yml
+    compose.runtime.gaudi.yml
     compose.runtime.metal.yml
     compose.runtime.cpu.yml
 
@@ -964,6 +968,7 @@ sovereign-vllm/
       cuda/
       rocm/
       xpu/
+      gaudi/
       metal/
       dgx_spark/
       strix_halo/
@@ -972,6 +977,7 @@ sovereign-vllm/
       cuda/
       rocm/
       xpu/
+      gaudi/
       metal/
 
     appliance/
@@ -989,6 +995,7 @@ sovereign-vllm/
     rocm/
     strix-halo/
     xpu/
+    gaudi/
     metal/
     cpu/
 
@@ -1079,6 +1086,7 @@ ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-arm64-dgx-spark-<version>
 ghcr.io/lazarus-ai-research/sovereign-runtime:rocm-x86_64-<version>
 ghcr.io/lazarus-ai-research/sovereign-runtime:rocm-strix-halo-<version>
 ghcr.io/lazarus-ai-research/sovereign-runtime:xpu-x86_64-<version>
+ghcr.io/lazarus-ai-research/sovereign-runtime:gaudi-x86_64-<version>
 ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-<version>
 ghcr.io/lazarus-ai-research/sovereign-runtime:cpu-x86_64-<version>
 ```
@@ -1393,6 +1401,23 @@ services:
       SOVEREIGN_PROFILE: xpu-x86_64
       VLLM_BACKEND: xpu
       ZE_ENABLE_PCI_ID_DEVICE_ORDER: "1"
+```
+
+Intel Gaudi 2 / Gaudi 3:
+
+```yaml
+services:
+  sovereign-runtime:
+    image: ghcr.io/lazarus-ai-research/sovereign-runtime:gaudi-x86_64-${SOVEREIGN_VERSION}
+    runtime: habana
+    ipc: host
+    cap_add:
+      - SYS_NICE
+    environment:
+      SOVEREIGN_PROFILE: gaudi-x86_64
+      VLLM_BACKEND: hpu
+      HABANA_VISIBLE_DEVICES: all
+      OMPI_MCA_btl_vader_single_copy_mechanism: none
       ONEAPI_DEVICE_SELECTOR: ${ONEAPI_DEVICE_SELECTOR:-level_zero:gpu}
 ```
 

@@ -41,6 +41,7 @@ var KnownProfiles = []string{
 	"rocm-x86_64",
 	"rocm-strix-halo",
 	"xpu-x86_64",
+	"gaudi-x86_64",
 	"metal-arm64",
 	"cpu-x86_64",
 	"cpu-arm64",
