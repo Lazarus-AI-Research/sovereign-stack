@@ -17,6 +17,7 @@ import {
   Workspace,
 } from "./api";
 import lazarusLogo from "./assets/lazarus_logo.png";
+import { applyTheme } from "./theme";
 
 const TABS = ["Overview", "Models", "Knowledge", "Evaluations", "Access", "Resilience", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -326,7 +327,7 @@ function Settings({ run }: { run: RunAction }) {
   if (!branding) return <section className="card"><Empty>Loading product settings…</Empty></section>;
   return <div className="two-column">
     <section className="card"><PanelTitle title="Branding" subtitle="Applies to the workspace title and product assets." />
-      <form className="stack-form" onSubmit={(event) => { event.preventDefault(); run("Apply branding", async () => { await api.saveBranding(branding); await api.applyBranding(); }); }}>
+      <form className="stack-form" onSubmit={(event) => { event.preventDefault(); run("Apply branding", async () => { await api.saveBranding(branding); applyTheme(branding); await api.applyBranding(); }); }}>
         <label>Product name<input value={branding.product_name} onChange={(e) => setBranding({ ...branding, product_name: e.target.value })} /></label>
         <label>Company name<input value={branding.company_name} onChange={(e) => setBranding({ ...branding, company_name: e.target.value })} /></label>
         <div className="form-grid"><label>Primary color<input type="color" value={branding.colors.primary} onChange={(e) => setBranding({ ...branding, colors: { ...branding.colors, primary: e.target.value } })} /></label><label>Accent color<input type="color" value={branding.colors.accent} onChange={(e) => setBranding({ ...branding, colors: { ...branding.colors, accent: e.target.value } })} /></label></div>

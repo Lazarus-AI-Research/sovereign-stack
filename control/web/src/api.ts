@@ -215,6 +215,7 @@ export const api = {
     method: "POST", body: JSON.stringify(value),
   }),
 
+  theme: () => request<import("./theme").Theme>("/theme"),
   branding: () => request<Branding>("/branding"),
   saveBranding: (value: Branding) => request<Branding>("/branding", { method: "PUT", body: JSON.stringify(value) }),
   applyBranding: () => request<unknown>("/workspace/branding/apply", { method: "POST", body: "{}" }),

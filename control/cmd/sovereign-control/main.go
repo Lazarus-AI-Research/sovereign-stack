@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/api"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/attribution"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/auth"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/backups"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/branding"
@@ -31,6 +32,9 @@ import (
 var version = "dev" // set via -ldflags at release build
 
 func main() {
+	// Attribution up front, before anything else can fail (§ branding policy).
+	log.Print(attribution.Banner())
+
 	addr := cmp.Or(os.Getenv("SOVEREIGN_CONTROL_LISTEN"), ":8080")
 
 	server := &api.Server{
