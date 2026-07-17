@@ -57,10 +57,18 @@ func Detect() []Detection {
 		})
 	}
 
-	if pathExists("/dev/dri") && pathExists("/sys/module/intel_gpu_top") || pathExists("/dev/accel") {
+	// /dev/accel is the Gaudi (habana accel driver) node, not an Intel GPU.
+	if pathExists("/dev/accel") || pathExists("/sys/class/accel") {
+		detections = append(detections, Detection{
+			Profile: "gaudi-x86_64",
+			Reasons: []string{"/dev/accel present (Intel Gaudi accelerator)"},
+		})
+	}
+
+	if pathExists("/dev/dri") && pathExists("/sys/module/intel_gpu_top") {
 		detections = append(detections, Detection{
 			Profile: "xpu-x86_64",
-			Reasons: []string{"Intel GPU/accelerator device files present"},
+			Reasons: []string{"Intel GPU device files present"},
 		})
 	}
 
