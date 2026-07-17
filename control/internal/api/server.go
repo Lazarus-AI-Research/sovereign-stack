@@ -98,9 +98,28 @@ func sessionToken(r *http.Request) string {
 	return ""
 }
 
-// open paths never require a session.
+// open paths never require a session. /theme is public so the login page can
+// render the customer's branding before anyone signs in.
 func openPath(path string) bool {
-	return path == BasePath+"/health" || path == BasePath+"/auth/login"
+	return path == BasePath+"/health" ||
+		path == BasePath+"/auth/login" ||
+		path == BasePath+"/theme"
+}
+
+// themeFields is the cosmetic subset of the branding document that is safe to
+// serve unauthenticated: everything here is already visible on the login page.
+// Serving an allowlist rather than the whole document means a field added to
+// branding.yaml later cannot leak by accident.
+var themeFields = []string{"product_name", "company_name", "logo", "logo_animated", "favicon", "colors"}
+
+func publicTheme(doc map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, k := range themeFields {
+		if v, ok := doc[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -841,6 +860,15 @@ func (s *Server) Handler() http.Handler {
 	// ── branding + feature flags (§26 product capabilities) ─────────────
 
 	if s.Branding != nil {
+		// Public cosmetic subset, so the login page can theme itself.
+		mux.HandleFunc("GET "+p("/theme"), func(w http.ResponseWriter, r *http.Request) {
+			doc, err := s.Branding.Get()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, publicTheme(doc))
+		})
 		mux.HandleFunc("GET "+p("/branding"), func(w http.ResponseWriter, r *http.Request) {
 			doc, err := s.Branding.Get()
 			if err != nil {

@@ -2,11 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "./api";
 import { Dashboard } from "./Dashboard";
 import { Login } from "./Login";
+import { applyTheme } from "./theme";
 
 type Session = "checking" | "anonymous" | "authenticated";
 
 export function App() {
   const [session, setSession] = useState<Session>("checking");
+
+  // Apply the customer's branding as early as possible — /theme is public, so
+  // the login screen is themed too. A failure leaves the default theme in place.
+  useEffect(() => {
+    api.theme().then(applyTheme).catch(() => {});
+  }, []);
 
   const check = useCallback(async () => {
     try {

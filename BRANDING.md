@@ -12,9 +12,17 @@ Sovereign Control settings or product configuration — no code, no rebuild:
 - **Colors** (primary, accent)
 
 This is deliberately low-friction. It lives in `config/branding.yaml`, is edited
-through the Control **Settings → Branding** panel, and applies at runtime. Adding
-more themeable surface (fonts, additional assets) is welcome; keep it in the
-branding config so it stays a setting, never a code change.
+through the Control **Settings → Branding** panel, and applies at runtime — no
+rebuild. Colors are pushed onto CSS custom properties (`--accent`, `--primary`)
+by `control/web/src/theme.ts`, so changing the accent re-skins the whole UI live;
+saving in the panel applies immediately. The login page themes itself too: a
+public, allowlisted `GET /api/control/v1/theme` serves only the cosmetic subset
+(product name, company/logo/favicon, colors) so it can be read before sign-in,
+while the full branding document stays behind auth.
+
+Adding more themeable surface (fonts, additional assets) is welcome; keep it in
+the branding config and the `/theme` allowlist so it stays a setting, never a
+code change.
 
 ## 2. "Powered by Lazarus AI" is fixed
 
