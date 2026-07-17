@@ -415,8 +415,18 @@ func (s *Server) Handler() http.Handler {
 						errorJSON(w, http.StatusServiceUnavailable, "gateway configuration is unavailable")
 						return
 					}
-					if err := gateway.GenerateConfig(r.Context(), s.GatewayConfigPath, s.Models, s.Profiles, s.Credentials); err != nil {
+					if err := s.Gateway.GenerateConfig(r.Context(), s.GatewayConfigPath, s.Models, s.Profiles, s.Credentials); err != nil {
 						errorJSON(w, http.StatusUnprocessableEntity, err.Error())
+						return
+					}
+					// Only bounce the gateway if it cannot pick the change up
+					// live; a restart drops in-flight requests, so it is not
+					// something to do for its own sake.
+					if !s.Gateway.NeedsReload() {
+						writeJSON(w, http.StatusAccepted, map[string]string{
+							"model_id": modelID,
+							"applied":  "live",
+						})
 						return
 					}
 					if err := s.Proxy.Restart(r.Context(), "sovereign-gateway"); err != nil {
@@ -1126,13 +1136,18 @@ func (s *Server) Handler() http.Handler {
 
 	if s.GatewayConfigPath != "" && s.Profiles != nil && s.Models != nil {
 		mux.HandleFunc("POST "+p("/gateway/config/regenerate"), func(w http.ResponseWriter, r *http.Request) {
-			if err := gateway.GenerateConfig(r.Context(), s.GatewayConfigPath, s.Models, s.Profiles, s.Credentials); err != nil {
+			if err := s.Gateway.GenerateConfig(r.Context(), s.GatewayConfigPath, s.Models, s.Profiles, s.Credentials); err != nil {
 				errorJSON(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]string{
-				"generated": s.GatewayConfigPath,
-				"note":      "POST /gateway/reload to apply",
+			note := "applied live; no reload needed"
+			if s.Gateway.NeedsReload() {
+				note = "POST /gateway/reload to apply"
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"generated":    s.GatewayConfigPath,
+				"needs_reload": s.Gateway.NeedsReload(),
+				"note":         note,
 			})
 		})
 	}

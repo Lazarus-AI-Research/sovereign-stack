@@ -1,6 +1,11 @@
 package gateway
 
-import "context"
+import (
+	"context"
+
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
+)
 
 // Provider is a Sovereign Gateway implementation.
 //
@@ -39,6 +44,21 @@ type Provider interface {
 	// Usage returns spend accounting. Local models normally report zero
 	// monetary cost while token and request counts remain populated.
 	Usage(ctx context.Context) ([]UsageRow, error)
+
+	// GenerateConfig renders the gateway's configuration from the product's
+	// registries (§2.2: generated configuration; the gateway UI is never
+	// exposed). path is the config file Control owns and the gateway reads.
+	//
+	// What this costs differs by provider and the caller must not assume:
+	// LiteLLM reads its model list from the file, so a change needs a reload;
+	// SovereignGateway keeps models in its database and takes them over the
+	// admin API, so they hot-reload and only process settings live in the file.
+	// Reload accordingly — see NeedsReload.
+	GenerateConfig(ctx context.Context, path string, models *models.Registry, profiles *embeddings.Registry, secrets SecretResolver) error
+
+	// NeedsReload reports whether GenerateConfig's result requires restarting
+	// the gateway to take effect.
+	NeedsReload() bool
 }
 
 // Model is a routable model name as the gateway reports it.

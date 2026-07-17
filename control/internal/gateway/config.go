@@ -21,7 +21,10 @@ type SecretResolver interface {
 // (design.md §2.2: generated configuration, UI never exposed). Every stable
 // alias — generation models and embedding profiles — routes to the single
 // runtime endpoint; remote/cloud models keep their registry-declared routes.
-func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Registry, profiles *embeddings.Registry, secrets SecretResolver) error {
+//
+// LiteLLM reads model_list from this file, so a regeneration needs a reload to
+// take effect; see LiteLLM.NeedsReload.
+func (c *LiteLLM) GenerateConfig(ctx context.Context, path string, modelRegistry *models.Registry, profiles *embeddings.Registry, secrets SecretResolver) error {
 	entries, err := modelRegistry.List()
 	if err != nil {
 		return err
@@ -130,3 +133,7 @@ func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Regi
 	}
 	return nil
 }
+
+// NeedsReload is true: LiteLLM loads model_list from its config file at start,
+// so a regenerated config only takes effect after the process restarts.
+func (c *LiteLLM) NeedsReload() bool { return true }

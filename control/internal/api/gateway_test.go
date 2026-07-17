@@ -8,19 +8,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 )
 
 // stubGateway is a gateway.Provider that returns whatever a test needs. It
 // exists only because §18.8 is now written against an interface: before, these
 // paths could only be exercised against a real LiteLLM.
 type stubGateway struct {
-	name      string
-	healthy   bool
-	keys      []gateway.KeyInfo
-	issueErr  error
-	budgetErr error
+	name        string
+	healthy     bool
+	keys        []gateway.KeyInfo
+	issueErr    error
+	budgetErr   error
+	needsReload bool
+	configErr   error
+	configured  int
 }
+
+func (s *stubGateway) GenerateConfig(context.Context, string, *models.Registry, *embeddings.Registry, gateway.SecretResolver) error {
+	s.configured++
+	return s.configErr
+}
+func (s *stubGateway) NeedsReload() bool { return s.needsReload }
 
 func (s *stubGateway) Name() string                 { return s.name }
 func (s *stubGateway) Healthy(context.Context) bool { return s.healthy }
