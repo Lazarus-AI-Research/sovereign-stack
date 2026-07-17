@@ -30,6 +30,30 @@ import (
 
 var version = "dev" // set via -ldflags at release build
 
+// selectGateway builds the configured Sovereign Gateway provider (§2.2).
+//
+// LiteLLM is the default and remains so until SovereignGateway passes the full
+// conformance and smoke suites on both certified profiles. An unknown value is
+// fatal rather than a silent fall back to the default: an operator who asked
+// for a specific gateway must never get a different one without being told.
+func selectGateway() gateway.Provider {
+	switch name := cmp.Or(os.Getenv("SOVEREIGN_GATEWAY_PROVIDER"), "litellm"); name {
+	case "litellm":
+		return gateway.New(
+			cmp.Or(os.Getenv("LITELLM_BASE_URL"), "http://sovereign-gateway:4000"),
+			os.Getenv("LITELLM_MASTER_KEY"),
+		)
+	case "sovereign":
+		return gateway.NewSovereign(
+			cmp.Or(os.Getenv("SOVEREIGN_GATEWAY_BASE_URL"), "http://sovereign-gateway:8080"),
+			os.Getenv("SOVEREIGN_GATEWAY_ADMIN_KEY"),
+		)
+	default:
+		log.Fatalf("SOVEREIGN_GATEWAY_PROVIDER=%q is not a known gateway (want litellm or sovereign)", name)
+		return nil
+	}
+}
+
 func main() {
 	addr := cmp.Or(os.Getenv("SOVEREIGN_CONTROL_LISTEN"), ":8080")
 
@@ -39,10 +63,7 @@ func main() {
 			cmp.Or(os.Getenv("DOCKER_PROXY_BASE_URL"), "http://sovereign-docker-proxy:8081"),
 			os.Getenv("DOCKER_PROXY_TOKEN"),
 		),
-		Gateway: gateway.New(
-			cmp.Or(os.Getenv("LITELLM_BASE_URL"), "http://sovereign-gateway:4000"),
-			os.Getenv("LITELLM_MASTER_KEY"),
-		),
+		Gateway: selectGateway(),
 		Version: version,
 		UI:      web.Handler(),
 	}

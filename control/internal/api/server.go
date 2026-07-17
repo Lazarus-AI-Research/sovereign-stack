@@ -49,7 +49,9 @@ var KnownProfiles = []string{
 type Server struct {
 	Runtime *runtime.Client
 	Proxy   *dockerproxy.Client
-	Gateway *gateway.Client
+	// Gateway is the configured Sovereign Gateway implementation (§2.2).
+	// Which one is installed never reaches this layer — see gateway.Provider.
+	Gateway gateway.Provider
 	Version string
 	// Auth enables session authentication when non-nil. It is nil only
 	// before the database is reachable and in unit tests.
@@ -120,10 +122,10 @@ func metricValue(ok bool) int {
 	return 0
 }
 
-// metrics exposes non-sensitive service health for Sovereign Observe. LiteLLM
-// protects its own /metrics endpoint with the master key in the supported
-// image, so Control performs the authenticated health probes and exports the
-// resulting gauges without placing credentials in Prometheus configuration.
+// metrics exposes non-sensitive service health for Sovereign Observe. A gateway
+// may protect its own /metrics with a credential, so Control performs the
+// authenticated health probes and exports the resulting gauges without placing
+// credentials in Prometheus configuration.
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -147,7 +149,7 @@ sovereign_control_up 1
 # HELP sovereign_control_runtime_up Whether Control can reach Sovereign Runtime.
 # TYPE sovereign_control_runtime_up gauge
 sovereign_control_runtime_up %d
-# HELP sovereign_control_gateway_up Whether Control can reach the LiteLLM gateway.
+# HELP sovereign_control_gateway_up Whether Control can reach Sovereign Gateway.
 # TYPE sovereign_control_gateway_up gauge
 sovereign_control_gateway_up %d
 # HELP sovereign_control_docker_proxy_up Whether Control can reach the restricted Docker proxy.
@@ -1035,7 +1037,10 @@ func (s *Server) Handler() http.Handler {
 	// ── §18.8 gateway ────────────────────────────────────────────────────
 
 	mux.HandleFunc("GET "+p("/gateway/status"), func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"healthy": s.Gateway.Healthy(r.Context())})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"healthy":  s.Gateway.Healthy(r.Context()),
+			"provider": s.Gateway.Name(),
+		})
 	})
 
 	mux.HandleFunc("GET "+p("/gateway/models"), func(w http.ResponseWriter, r *http.Request) {
@@ -1053,7 +1058,7 @@ func (s *Server) Handler() http.Handler {
 			errorJSON(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, keys)
+		writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
 	})
 
 	mux.HandleFunc("POST "+p("/gateway/keys"), func(w http.ResponseWriter, r *http.Request) {
@@ -1064,7 +1069,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		key, err := s.Gateway.GenerateKey(r.Context(), request)
 		if err != nil {
-			errorJSON(w, http.StatusBadGateway, err.Error())
+			status := http.StatusBadGateway
+			if errors.Is(err, gateway.ErrNoKeyExpiry) {
+				status = http.StatusUnprocessableEntity
+			}
+			errorJSON(w, status, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusCreated, key)
@@ -1084,7 +1093,7 @@ func (s *Server) Handler() http.Handler {
 			errorJSON(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, usage)
+		writeJSON(w, http.StatusOK, map[string]any{"usage": usage})
 	})
 
 	mux.HandleFunc("GET "+p("/gateway/budgets"), func(w http.ResponseWriter, r *http.Request) {
@@ -1093,7 +1102,7 @@ func (s *Server) Handler() http.Handler {
 			errorJSON(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, keys)
+		writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
 	})
 
 	mux.HandleFunc("PATCH "+p("/gateway/budgets/{id}"), func(w http.ResponseWriter, r *http.Request) {
@@ -1102,12 +1111,17 @@ func (s *Server) Handler() http.Handler {
 			errorJSON(w, http.StatusBadRequest, "invalid budget update")
 			return
 		}
-		result, err := s.Gateway.UpdateBudget(r.Context(), r.PathValue("id"), update)
-		if err != nil {
-			errorJSON(w, http.StatusBadGateway, err.Error())
+		// A gateway that cannot express part of the update says so; surface it
+		// as 422 rather than 502 — the request is unsupported, not broken.
+		if err := s.Gateway.UpdateBudget(r.Context(), r.PathValue("id"), update); err != nil {
+			status := http.StatusBadGateway
+			if errors.Is(err, gateway.ErrNoKeyLimitUpdate) {
+				status = http.StatusUnprocessableEntity
+			}
+			errorJSON(w, status, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeJSON(w, http.StatusOK, map[string]string{"updated": r.PathValue("id")})
 	})
 
 	if s.GatewayConfigPath != "" && s.Profiles != nil && s.Models != nil {
