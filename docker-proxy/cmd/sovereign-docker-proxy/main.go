@@ -6,10 +6,14 @@ package main
 import (
 	"log"
 
+	"github.com/Lazarus-AI-Research/sovereign-stack/docker-proxy/internal/attribution"
 	"github.com/Lazarus-AI-Research/sovereign-stack/docker-proxy/internal/server"
 )
 
 func main() {
+	// Attribution up front (§ branding policy).
+	log.Print(attribution.Banner())
+
 	if err := server.Run(); err != nil {
 		log.Fatal(err)
 	}
