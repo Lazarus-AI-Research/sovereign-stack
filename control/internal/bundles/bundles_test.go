@@ -46,12 +46,13 @@ func TestArchivePathsPreservesRelativeLayout(t *testing.T) {
 }
 
 func TestModelPathsAreProfileSpecific(t *testing.T) {
-	metal, err := modelPaths("metal-arm64", []string{"assistant-large", "embedding-text-compact"})
+	metal, err := modelPaths("metal-arm64", []string{"assistant-large", "embedding-gemma-default"})
 	if err != nil || len(metal) != 3 {
 		t.Fatalf("metal paths = %v, %v", metal, err)
 	}
-	if _, err := modelPaths("metal-arm64", []string{"embedding-omni-default"}); err == nil {
-		t.Fatal("omni model should be rejected on Metal")
+	cuda, err := modelPaths("cuda-x86_64", []string{"embedding-gemma-default"})
+	if err != nil || len(cuda) != 1 || cuda[0] != "embeddinggemma/embeddinggemma-300M-qat-Q4_0.gguf" {
+		t.Fatalf("CUDA embedding paths = %v, %v", cuda, err)
 	}
 	all, err := modelPaths("cuda-x86_64", []string{"all", "assistant-large"})
 	if err != nil || len(all) != 1 || all[0] != "." {

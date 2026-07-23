@@ -3,12 +3,13 @@
 Embedding profiles bind an immutable model revision to pooling,
 normalization, distance metric, query/document prefixes, chunking strategy,
 preprocessing version, and modalities. Dimensions are never guessed from
-configuration; Control discovers them from the loaded runtime manifest.
+configuration; Control discovers them by probing the dedicated service.
 
-The CUDA default is the pinned LCO Omni profile for text, image, and audio. A
-pinned Nomic v1.5 text profile remains available as a compact fallback. Metal
-uses the Nomic Q8 GGUF profile with `search_query:` and `search_document:`
-prefixes.
+Both certified hosts use the pinned `gemma-default` profile through
+`embeddinggemma.c` v0.3.1. It produces 768-dimensional, L2-normalized text
+vectors. Queries use `task: search result | query: ` and documents use
+`title: none | text: `. CUDA runs the service in a private sibling container;
+Apple Silicon runs the Metal binary as a loopback-only launchd service.
 
 Changing any embedding identity requires a new index. In Control:
 
@@ -20,9 +21,8 @@ Changing any embedding identity requires a new index. In Control:
    pgvector namespace while reporting document and vector counts.
 5. Control validates dimensions and nonzero counts, atomically activates the
    new binding, and exits maintenance mode.
-6. Any failure restores the previous runtime profile and active index.
+6. Any failure preserves the previous active index.
 
 Existing versions cannot be edited. An active version cannot be deleted until
 a replacement is active. The `embedding` and `retrieval` eval suites provide
-portable gates; `omni-embedding` adds image/audio and cross-modal checks on the
-CUDA profile.
+portable gates on both certified profiles.

@@ -48,10 +48,11 @@ var KnownProfiles = []string{
 }
 
 type Server struct {
-	Runtime *runtime.Client
-	Proxy   *dockerproxy.Client
-	Gateway *gateway.Client
-	Version string
+	Runtime    *runtime.Client
+	Embeddings *embeddings.Client
+	Proxy      *dockerproxy.Client
+	Gateway    *gateway.Client
+	Version    string
 	// Auth enables session authentication when non-nil. It is nil only
 	// before the database is reachable and in unit tests.
 	Auth *auth.Service
@@ -154,6 +155,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		runtimeUp = err == nil
 	}
 	gatewayUp := s.Gateway != nil && s.Gateway.Healthy(ctx)
+	embeddingsUp := s.Embeddings != nil && s.Embeddings.Healthy(ctx)
 	proxyUp := false
 	if s.Proxy != nil {
 		_, err := s.Proxy.Status(ctx)
@@ -170,10 +172,13 @@ sovereign_control_runtime_up %d
 # HELP sovereign_control_gateway_up Whether Control can reach the LiteLLM gateway.
 # TYPE sovereign_control_gateway_up gauge
 sovereign_control_gateway_up %d
+# HELP sovereign_control_embeddings_up Whether Control can reach embeddinggemma.
+# TYPE sovereign_control_embeddings_up gauge
+sovereign_control_embeddings_up %d
 # HELP sovereign_control_docker_proxy_up Whether Control can reach the restricted Docker proxy.
 # TYPE sovereign_control_docker_proxy_up gauge
 sovereign_control_docker_proxy_up %d
-`, metricValue(runtimeUp), metricValue(gatewayUp), metricValue(proxyUp))
+`, metricValue(runtimeUp), metricValue(gatewayUp), metricValue(embeddingsUp), metricValue(proxyUp))
 }
 
 func (s *Server) Handler() http.Handler {
@@ -264,6 +269,10 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 		status["runtime"] = runtimeStatus
+		status["embeddings"] = map[string]any{
+			"reachable": s.Embeddings != nil && s.Embeddings.Healthy(ctx),
+			"backend":   "embeddinggemma",
+		}
 
 		status["gateway"] = map[string]any{"healthy": s.Gateway.Healthy(ctx)}
 
@@ -371,6 +380,9 @@ func (s *Server) Handler() http.Handler {
 					}
 				}
 			}
+			if s.Embeddings != nil && s.Embeddings.Healthy(r.Context()) {
+				loaded["embedding"] = embeddings.EmbeddingGemmaModel
+			}
 			out := make([]map[string]any, 0, len(entries))
 			for _, entry := range entries {
 				raw, _ := json.Marshal(entry)
@@ -442,6 +454,10 @@ func (s *Server) Handler() http.Handler {
 						return
 					}
 					writeJSON(w, http.StatusAccepted, map[string]string{"model_id": modelID, "restarting": "sovereign-gateway"})
+					return
+				}
+				if entry.Role == "embedding" {
+					errorJSON(w, http.StatusConflict, "local embeddings are managed by the dedicated embeddinggemma profile")
 					return
 				}
 				// §2.9: warn, never block.
@@ -550,7 +566,7 @@ func (s *Server) Handler() http.Handler {
 			}
 			allowed := map[string]bool{
 				"smoke": true, "quick": true, "full": true, "embedding": true,
-				"retrieval": true, "mixed-role": true, "omni-embedding": true,
+				"retrieval": true, "mixed-role": true,
 			}
 			if !allowed[request.Suite] {
 				errorJSON(w, http.StatusBadRequest, "unknown evaluation suite")
@@ -666,24 +682,22 @@ func (s *Server) Handler() http.Handler {
 				errorJSON(w, http.StatusNotFound, err.Error())
 				return
 			}
-			manifest, err := s.Runtime.Manifest(r.Context())
-			if err != nil {
-				errorJSON(w, http.StatusBadGateway, "runtime unreachable: "+err.Error())
+			if profile.Provider != "embeddinggemma" || profile.Model != embeddings.EmbeddingGemmaModel {
+				errorJSON(w, http.StatusUnprocessableEntity, "profile is not compatible with the embeddinggemma backend")
 				return
 			}
 			result := map[string]any{"profile": r.PathValue("id"), "loaded": false}
-			if roles, ok := manifest["roles"].(map[string]any); ok {
-				if embedding, ok := roles["embedding"].(map[string]any); ok {
-					loaded := embedding["engine_model"] == profile.Model &&
-						embedding["status"] == "healthy"
-					result["loaded"] = loaded
-					if dims, ok := embedding["dimensions"].(float64); ok && loaded {
-						result["dimensions"] = int(dims)
-					}
-					if !loaded {
-						result["detail"] = "profile model is not the currently loaded embedding model; activate it first"
-					}
-				}
+			if s.Embeddings == nil {
+				result["detail"] = "embedding service is unavailable"
+				writeJSON(w, http.StatusOK, result)
+				return
+			}
+			dimensions, probeErr := s.Embeddings.Probe(r.Context(), profile.ServedModelName)
+			if probeErr == nil {
+				result["loaded"] = true
+				result["dimensions"] = dimensions
+			} else {
+				result["detail"] = probeErr.Error()
 			}
 			writeJSON(w, http.StatusOK, result)
 		})

@@ -65,12 +65,19 @@ jobs:
         include:
           - name: sovereign-control
             dockerfile: control/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - name: sovereign-docker-proxy
             dockerfile: docker-proxy/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - name: sovereign-evals
             dockerfile: evals/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - name: sovereign-workspace
             dockerfile: workspace/Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - name: sovereign-embeddings
+            dockerfile: embeddinggemma/Dockerfile.cuda
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -88,7 +95,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms }}
           push: true
           build-args: VERSION=${{ env.VERSION }}
           tags: ${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.VERSION }}
@@ -157,6 +164,15 @@ jobs:
           python3 -m pip install jsonschema PyYAML
           python3 release/validate_contracts.py
           test "$(python3 -c 'import json; print(json.load(open("release/manifest.json"))["version"])')" = "$VERSION"
+      - name: Vendor pinned EmbeddingGemma Metal executable
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/assets
+          curl -fsSL --retry 4 \
+            -o deploy/assets/embeddinggemma-darwin-arm64-metal \
+            https://github.com/QuixiAI/embeddinggemma.c/releases/download/v0.3.1/embeddinggemma-darwin-arm64-metal
+          echo 'c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5  deploy/assets/embeddinggemma-darwin-arm64-metal' | sha256sum -c -
+          chmod 755 deploy/assets/embeddinggemma-darwin-arm64-metal
       - name: Package release
         run: |
           set -euo pipefail
@@ -206,7 +222,8 @@ jobs:
             "$TEST_ROOT/appliance/releases/${GITHUB_REF_NAME#v}"
           grep -qx "SOVEREIGN_VERSION=${GITHUB_REF_NAME#v}" "$TEST_ROOT/appliance/.env"
           for key in SOVEREIGN_CONTROL_IMAGE SOVEREIGN_DOCKER_PROXY_IMAGE \
-            SOVEREIGN_EVALS_IMAGE SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE; do
+            SOVEREIGN_EVALS_IMAGE SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE \
+            SOVEREIGN_EMBEDDINGS_IMAGE; do
             grep -Eq "^$key=ghcr.io/lazarus-ai-research/[^@]+@sha256:[0-9a-f]{64}$" \
               "$TEST_ROOT/appliance/.env"
           done
@@ -217,7 +234,7 @@ jobs:
             -f "$TEST_ROOT/appliance/current/deploy/compose/compose.runtime.cuda.yml" \
             --profile tools config > "$TEST_ROOT/compose.yml"
           for image in sovereign-control sovereign-docker-proxy sovereign-evals \
-            sovereign-workspace sovereign-runtime; do
+            sovereign-workspace sovereign-runtime sovereign-embeddings; do
             grep -Eq "image: ghcr.io/lazarus-ai-research/$image:[^ ]+@sha256:[0-9a-f]{64}$" \
               "$TEST_ROOT/compose.yml"
           done

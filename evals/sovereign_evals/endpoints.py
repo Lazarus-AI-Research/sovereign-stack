@@ -29,6 +29,14 @@ class Endpoints:
     gateway_api_key: str | None = field(
         default_factory=lambda: os.environ.get("LITELLM_MASTER_KEY") or None
     )
+    embeddings_base_url: str = field(
+        default_factory=lambda: _env(
+            "SOVEREIGN_EMBEDDINGS_BASE_URL", "http://sovereign-embeddings:42666/v1"
+        ).removesuffix("/v1")
+    )
+    embedding_model: str = field(
+        default_factory=lambda: _env("EMBEDDING_MODEL_PREF", "embedding-gemma-default")
+    )
     prometheus_base_url: str = field(
         default_factory=lambda: _env("PROMETHEUS_BASE_URL", "http://prometheus:9090")
     )
@@ -40,7 +48,15 @@ class Endpoints:
     )
 
     def base_url(self, target: str) -> str:
-        return self.gateway_base_url if target == "gateway" else self.runtime_base_url
+        if target == "gateway":
+            return self.gateway_base_url
+        if target == "embeddings":
+            return self.embeddings_base_url
+        return self.runtime_base_url
 
     def api_key(self, target: str) -> str | None:
-        return self.gateway_api_key if target == "gateway" else self.runtime_api_key
+        if target == "gateway":
+            return self.gateway_api_key
+        if target == "embeddings":
+            return None
+        return self.runtime_api_key

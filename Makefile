@@ -39,6 +39,7 @@ images: ## Build application images (context: repo root)
 	docker build --build-arg VERSION=$(VERSION) -f docker-proxy/Dockerfile -t $(REGISTRY)/sovereign-docker-proxy:$(VERSION) .
 	docker build -f evals/Dockerfile -t $(REGISTRY)/sovereign-evals:$(VERSION) .
 	docker build --build-arg VERSION=$(VERSION) -f workspace/Dockerfile -t $(REGISTRY)/sovereign-workspace:$(VERSION) .
+	docker build -f embeddinggemma/Dockerfile.cuda -t $(REGISTRY)/sovereign-embeddings:$(VERSION) .
 
 compose-validate: ## Validate the Compose configuration
 	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml config -q

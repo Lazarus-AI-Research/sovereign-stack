@@ -17,8 +17,8 @@ Release-candidate users should pin both the installer URL and
   generation.
 - **Sovereign Control** for models, provider credentials, embedding profiles,
   evaluations, backups, offline bundles, and system health.
-- **Sovereign Runtime** for local generation and embeddings, with certified
-  Metal and CUDA profiles.
+- **Sovereign Runtime** for local generation, plus a dedicated
+  `embeddinggemma.c` service for text embeddings.
 - **LiteLLM and pgvector** for stable model aliases, gateway policy, and local
   vector storage.
 - **Prometheus, Grafana, Loki, OpenTelemetry, and Phoenix** for local
@@ -30,8 +30,8 @@ Release-candidate users should pin both the installer URL and
 
 | Profile | Host requirements | v0.1 capability |
 | --- | --- | --- |
-| `metal-arm64` | Apple Silicon Mac, 32 GB+ unified memory, Docker Desktop with Compose v2 | Text chat, text embeddings, and pgvector RAG through a signed Metal host agent |
-| `cuda-x86_64` | Ubuntu 24.04 x86_64, NVIDIA GPU with 24 GB+ VRAM, Docker Engine with Compose v2, NVIDIA driver, and NVIDIA Container Toolkit | Text chat, text/image/audio embeddings, and cross-modal retrieval |
+| `metal-arm64` | Apple Silicon Mac, 32 GB+ unified memory, Docker Desktop with Compose v2 | Text chat through a signed generation agent, plus text embeddings and pgvector RAG through a loopback-only Metal service |
+| `cuda-x86_64` | Ubuntu 24.04 x86_64, NVIDIA GPU with 24 GB+ VRAM, Docker Engine with Compose v2, NVIDIA driver, and NVIDIA Container Toolkit | Text chat, text embeddings, and pgvector RAG |
 
 Both profiles require `curl`, `tar`, `openssl`, a running Docker daemon, at
 least 20 GB free disk, and network access for the initial install. At least
@@ -134,7 +134,7 @@ The installed defaults are:
 | Setting | CUDA | Apple Silicon |
 | --- | --- | --- |
 | Generation route | Local `assistant-large` | Local `assistant-large` |
-| Embedding profile | `omni-default` (`embedding-omni-default`) | `text-compact` (`embedding-text-compact`) |
+| Embedding profile | `gemma-default` (`embedding-gemma-default`) | `gemma-default` (`embedding-gemma-default`) |
 | Phoenix tracing | Metadata only | Metadata only |
 | Prompt and response logging | Off | Off |
 | Full-content traces | Off | Off |
@@ -195,31 +195,22 @@ Embedding identity includes the checkpoint, pooling, normalization, prefixes,
 preprocessing, and vector dimensions. It cannot be changed underneath an
 existing index.
 
-Open **Control > Knowledge** and select:
+Open **Control > Knowledge** and select the single certified profile:
 
 | Profile | Hosts | Use it for | Workspace settings |
 | --- | --- | --- | --- |
-| `omni-default` | CUDA | Text, image, and audio retrieval | `EMBEDDING_MODEL_PREF=embedding-omni-default`; query and passage prefixes empty |
-| `text-compact` | CUDA or Apple Silicon | Smaller text-only retrieval | `EMBEDDING_MODEL_PREF=embedding-text-compact`; query prefix `search_query: `; passage prefix `search_document: ` |
+| `gemma-default` | CUDA or Apple Silicon | Text retrieval through `embeddinggemma.c` | `EMBEDDING_MODEL_PREF=embedding-gemma-default`; query prefix `task: search result \| query: `; passage prefix `title: none \| text: ` |
 
 Then:
 
-1. Select **Validate** for the desired profile, followed by **Activate**.
+1. Select **Validate** for `gemma-default`, followed by **Activate**.
 2. Make the matching Workspace settings explicit in
-   `~/.sovereign/.env`. For example, `text-compact` requires:
+   `~/.sovereign/.env`:
 
    ```dotenv
-   EMBEDDING_MODEL_PREF=embedding-text-compact
-   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX="search_query: "
-   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX="search_document: "
-   ```
-
-   For `omni-default`, use:
-
-   ```dotenv
-   EMBEDDING_MODEL_PREF=embedding-omni-default
-   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX=""
-   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX=""
+   EMBEDDING_MODEL_PREF=embedding-gemma-default
+   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX="task: search result | query: "
+   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX="title: none | text: "
    ```
 
 3. Run `sovereign up` to apply the Workspace preference.
@@ -361,7 +352,7 @@ sovereign down
 ```
 
 Additional evaluation suites include `quick`, `embedding`, `retrieval`,
-`mixed-role`, and the CUDA-specific `omni-embedding` suite. Reports are stored
+`mixed-role`, and `full`. Reports are stored
 under `~/.sovereign/reports` and are also visible in Control.
 
 ## Models and provider credentials
@@ -370,8 +361,7 @@ Local release models are pinned to immutable revisions. Stable aliases keep the
 workspace independent of engine-specific names:
 
 - `assistant-large` for generation.
-- `embedding-text-compact` for the Metal text embedding route.
-- `embedding-omni-default` for CUDA text, image, and audio embeddings.
+- `embedding-gemma-default` for text embeddings on every certified profile.
 
 Control can also register OpenAI-compatible endpoints and cloud presets for
 OpenAI, Anthropic, and Gemini. Provider API keys are encrypted credential

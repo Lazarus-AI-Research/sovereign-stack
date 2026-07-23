@@ -44,6 +44,9 @@ if [[ -n "$OVERLAY" && -d "$CURRENT/deploy" && -f "$ENV_FILE" ]] && command -v d
 fi
 
 if [[ "$PROFILE" == metal-arm64 ]]; then
+  if [[ -x "$CURRENT/deploy/scripts/uninstall-embeddinggemma-metal.sh" ]]; then
+    SOVEREIGN_HOME="$SOVEREIGN_HOME" "$CURRENT/deploy/scripts/uninstall-embeddinggemma-metal.sh"
+  fi
   AGENT_UNINSTALL=""
   if [[ -f "$ENV_FILE" ]]; then
     VERSION="$(sed -n 's/^SOVEREIGN_VERSION=//p' "$ENV_FILE" | tail -n 1)"

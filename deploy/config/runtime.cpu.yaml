@@ -30,21 +30,9 @@ roles:
     memory_weight: 82
     max_concurrent_requests: 2
 
-  # The preferred omni embedding model (§10.1), text modality first; image
-  # and audio arrive with the omni conformance milestone (§10.3).
   embedding:
     enabled: false
     task: embed
-    source: huggingface
-    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
-    revision: main
-    served_model_name: embedding-omni-default
-    priority: low
-    memory_weight: 18
-    max_concurrent_requests: 2
-    throttle_when_generation_queue_above: 2
-    pooling: last
-    normalization: l2
 
 observability:
   prometheus: true

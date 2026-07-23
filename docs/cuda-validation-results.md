@@ -1,175 +1,85 @@
-# CUDA Validation Results — Lazarus Sovereign Stack runtime (quixi-3090-02)
+# CUDA Validation Results
 
-Status as of 2026-07-15. Box: 8× RTX 3090 (24GB); all appliance runs use
-`CUDA_VISIBLE_DEVICES=0` — single-GPU is the product topology. Stack:
-`~/svenv` with vLLM 0.25.0 CUDA wheels, `-e ~/sovereign-vllm` (Lazarus
-overlay), `-e ~/SovereignStack/evals`. Runner: `~/run-cuda-validation.sh
-single|multi`; all reports land in `~/cuda-validation/`.
+## 2026-07-23 EmbeddingGemma validation
 
-## What passed
+The `embeddinggemma.c` CUDA path was validated on `quixi-3090-02`
+(`nv3090-02`), an Ubuntu host with eight NVIDIA GeForce RTX 3090 GPUs, NVIDIA
+driver 580.65.06, Docker 28.2.2, and Docker Compose 2.36.2. Validation used GPU
+1 while the existing Sovereign deployment continued serving generation on GPU
+0. The production deployment and gateway configuration were not modified.
 
-| Gate | Result | Report |
-|---|---|---|
-| Single-role conformance (gemma generation only) | **13 passed / 1 skipped** (embedding disabled by config) | `conformance-cuda-single.json` |
-| M12 multimodal embedding validation (LCO alone, port 8976) | **16/16** — text, image, audio | `mm-validation.json` (harness: `validate-mm.py`) |
-| Multi-role conformance (gemma + LCO, one process) | **14/14** — both roles healthy, zero skips | `conformance-cuda-multi.json` |
-| v0.1.0-rc.1 appliance smoke | **14/14** — direct runtime, gateway, all three embedding modalities, pgvector, metrics | `smoke-20260715-041107.json` |
-| Full benchmark | **8/8** — serial/concurrent generation, embedding batches, mixed workload, retrieval | `full-20260715-043641.json` |
-| Mixed-role pressure | **6/6** — balanced, generation-heavy, embedding-heavy, post-pressure probes | `mixed-role-20260715-043707.json` |
-| Omni embedding | **5/5** — text/image/audio, cross-modal ranking, pgvector | `omni-embedding-20260715-043651.json` |
+The validation image was built from the current `embeddinggemma/Dockerfile.cuda`
+and had image ID
+`sha256:da584e21950145b21ad40881c0e965abf8c07a061f0819a77a7c034c4f877d3a`.
+It contained:
 
-Models are the locked user decisions: generation `google/gemma-4-E2B-it`
-(alias `assistant-large`), embedding
-`LCO-Embedding/LCO-Embedding-Omni-3B-2605` (alias
-`embedding-omni-default`). Embedding dimensionality is **probed** at
-startup (2048 for LCO), never hardcoded; L2 norm verified ≈ 1.0.
+- `embeddinggemma.c` v0.3.1, CUDA executable SHA-256
+  `6ed7b9eabb5d9f835a7a485fddc96e10b05a25e2b959faa761b55f4be5378de3`;
+- `embeddinggemma-300M-qat-Q4_0.gguf` at revision
+  `8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73`, SHA-256
+  `50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26`;
+- CUDA 12.9.1 runtime, with all executable dependencies resolved.
 
-Highlights from the 16 multimodal checks: image and audio embeddings
-return the same 2048-dim L2-normalized vectors as text; a 3×3
-image↔caption cosine matrix puts every image nearest its own caption
-(semantic alignment, not just shape); remote media URLs are rejected with
-400 (sovereignty rule — the runtime never fetches media).
+The service ran as UID/GID 65532, its model mount was read-only, and its test
+port was bound only to loopback. The CUDA process used approximately 988 MiB
+of VRAM (approximately 998 MiB total card usage during the test).
 
-## Multi-role conformance (this run)
+### Results
 
-**14 passed / 0 failed / 0 skipped** with `ready=true`. Generation and
-embedding ran concurrently on GPU 0 behind the appliance's single port. The
-validated 24GB allocation is:
+All of the following checks passed:
 
-| Role | `max_model_len` | `memory_weight` | Effective vLLM fraction | Observed model / KV memory |
-|---|---:|---:|---:|---:|
-| Generation | 2048 | 52 | 0.478 | 9.8 GiB / 1.18 GiB |
-| Embedding | 2048 | 40 | 0.368 | 8.26 GiB / 0.18 GiB |
+- `GET /healthz` readiness after model load;
+- the original `POST /api/embed` API, returning one requested 128-dimensional
+  vector;
+- the additive OpenAI-compatible `POST /v1/embeddings` API, returning the
+  stable `embedding-gemma-default` alias, 768 dimensions, unit L2 norm, and
+  token usage;
+- a 32-input batch at 256 dimensions, preserving count and index order;
+- OpenAI `encoding_format: base64`, where 256 float32 values decoded to 1,024
+  bytes;
+- rejection of invalid dimensions with HTTP 400;
+- 32 warm concurrent requests from 16 clients, all returning HTTP 200 and 768
+  dimensions;
+- an isolated LiteLLM instance using the shipped configuration: the embedding
+  alias appeared in `/v1/models`, a two-input request returned ordered
+  768-dimensional unit vectors, and a request without the gateway key returned
+  HTTP 401;
+- semantic retrieval through LiteLLM, which ranked the expected private-local-AI
+  document first;
+- insertion and cosine retrieval through the pinned pgvector image using a real
+  `vector(768)` column. The expected ranking was `private-ai`, `tomatoes`, then
+  `orchestra`, with cosine similarities 0.663013, 0.250270, and 0.226165;
+- failure isolation: restarting only EmbeddingGemma changed its PID and start
+  time, while `sovereign-runtime` remained healthy with PID 992445, zero
+  restarts, and the unchanged start time
+  `2026-07-15T04:07:37.927538997Z`. LiteLLM embedding traffic recovered after
+  `GET /healthz` reported readiness.
 
-Both roles use `--enforce-eager` and `max_concurrent_requests: 2`. Peak
-device allocation was 21,841 MiB. The manifest reported `healthy`, both model
-aliases appeared in `/v1/models`, chat/completions/streaming and text
-embedding passed, and the embedding role advertised `[text, image, audio]`.
+The direct warm micro-smoke observed 13.35 ms for a single 768-dimensional
+OpenAI request, 7.95 ms for the 32-input batch, and approximately 919 requests
+per second with 15.22 ms p95 latency in the small concurrency check. The first
+native request, including cold-path effects after readiness, took 132.84 ms.
+These figures confirm function and basic concurrency only; they are not a
+capacity benchmark.
 
-Two process settings are load-bearing on the direct `AsyncLLM` appliance
-path:
+### Isolation and cleanup
 
-- `VLLM_BACKEND=cuda` selects the appliance's CUDA memory policy. Without it,
-  the adapter identifies itself as CPU and omits each role's
-  `--gpu-memory-utilization`, so both engines independently request vLLM's
-  default 92%.
-- `VLLM_WORKER_MULTIPROC_METHOD=spawn` prevents the second engine from being
-  forked out of a parent that already owns a live engine and many threads.
-  The forked embedding engine stalled during NCCL model-parallel
-  initialization; spawn loaded both roles normally. The appliance now
-  defaults this setting while preserving an explicit operator override.
+The temporary EmbeddingGemma, LiteLLM, and pgvector containers were separate
+from the production Compose project. pgvector used a network-disabled,
+memory-backed data directory. After validation, all three containers, the
+validation image tag, model/config directory, and loopback listeners were
+removed. GPU 1 returned to its 4 MiB idle baseline. The production runtime
+still had the same PID, start time, zero restart count, and healthy status; all
+existing Sovereign containers remained up.
 
-## Bugs fixed
+### Remaining release gates
 
-### 1. flashinfer JIT could not find ninja → generation role dead on CUDA
+This validates the core CUDA binary, both embedding APIs, LiteLLM routing,
+pgvector compatibility, and process-level restart isolation. It does not
+replace a fresh installation from the signed offline bundle, a complete
+Compose lifecycle test on the target host, prolonged soak testing, or
+simultaneous generation-and-embedding pressure on the same GPU. Those remain
+release-certification gates.
 
-**Symptom:** single-role start failed with `MODEL_LOAD_FAILED`;
-underneath, `FileNotFoundError: 'ninja'` from flashinfer JIT-compiling its
-CUDA sampling kernel at engine warmup.
-
-**Cause:** the supervisor launches `run-sovereign-runtime` directly (venv
-not activated), so the interpreter's `bin/` dir — where ninja lives — is
-not on `PATH`, and `shutil.which('ninja')` returns `None`.
-
-**Fix:** `lazarus/appliance/launcher.py` prepends `sys.executable`'s bin
-dir to `PATH` before the engine subprocess is spawned, so the appliance
-finds its own bundled toolchain regardless of launch context. Commit
-`9fbc25b` in `~/sovereign-vllm`.
-
-### 2. The M12 bug: LCO fails to load as a pooling model
-
-**Symptom:** `AttributeError: 'Qwen2_5OmniProcessor' object has no
-attribute '_get_num_multimodal_tokens'` at engine start, unaffected by
-`--limit-mm-per-prompt '{"image":0,...}'`.
-
-**Root cause:** LCO is a *thinker-only* Qwen2.5-Omni checkpoint —
-`architectures=["Qwen2_5OmniThinkerForConditionalGeneration"]`, thinker
-config at the top level of config.json, weights unprefixed (`model.*`,
-`visual.*`, `audio_tower.*`). Pinned vLLM 0.25 has no registry entry for
-that arch string, so it silently fell back to the **Transformers modeling
-backend**, whose multimodal path calls
-`Processor._get_num_multimodal_tokens` — a method the pinned transformers'
-`Qwen2_5OmniProcessor` does not implement. That's why the mm-limit flag
-couldn't suppress it: the failure was in the fallback backend's processor
-plumbing, not in multimodal budgeting.
-
-**Fix (fully out of tree — see "M12 plugin approach"):** register the
-thinker arch onto vLLM's *native* omni-thinker model. Commit `29b3fcc`.
-
-### Related fix found on the way (worth knowing about)
-
-`d3c6656`: vLLM 0.25 renamed `--override-pooler-config` →
-`--pooler-config` and `PoolerConfig.normalize` → `use_activation`. The
-appliance's unknown-flag filter silently dropped the old spelling, so the
-role config's `pooling: last` / `normalization: l2` never reached the
-engine. macOS conformance had passed only because engine defaults happened
-to match. Now the appliance emits the 0.25 spellings.
-
-### 3. Multi-role CUDA startup used an unsafe fork
-
-**Symptom:** with memory limits correctly applied, generation loaded and the
-embedding EngineCore started, opened a CUDA context, then stopped making
-progress during model-parallel initialization.
-
-**Cause:** the appliance constructs `AsyncLLM` directly and therefore bypassed
-the `vllm serve` entrypoint's multiprocessing guard. vLLM defaulted to `fork`;
-the second role was forked after the parent already owned a live engine and
-hundreds of threads.
-
-**Fix:** the appliance defaults `VLLM_WORKER_MULTIPROC_METHOD=spawn` before
-vLLM is imported. An explicit operator setting is still respected.
-Commit `0abc45d` in `~/sovereign-vllm`.
-
-## The M12 plugin approach
-
-All of it lives in `~/sovereign-vllm/lazarus/models/embedding/lco_omni/`
-plus small appliance hooks — no edits to vLLM site-packages, no fork
-patches needed for this feature.
-
-1. **Arch registration via `vllm.general_plugins` entry point**
-   (declared in `pyproject.toml`). vLLM loads general plugins in *every*
-   process, including engine-core workers, so the registration survives
-   process spawning. The plugin maps
-   `Qwen2_5OmniThinkerForConditionalGeneration` onto
-   `LCOOmniThinkerForConditionalGeneration` — a subclass of vLLM's native
-   thinker model whose `WeightsMapper` additionally accepts the
-   unprefixed checkpoint tensor names (prefix rules are ordered, so
-   full-omni names still map identically). It is a no-op the day a future
-   vLLM registers the arch natively.
-
-2. **`normalize_thinker_config` hf_overrides callable** — wraps the bare
-   top-level thinker config into the full `Qwen2_5OmniConfig` shape that
-   every native code path (mrope detection, max_model_len resolution,
-   processing info) expects, carrying the checkpoint's dtype so
-   `dtype=auto` resolves correctly. The appliance backend injects it for
-   embedding roles because callables can't be passed through CLI argv.
-
-3. **Extended `/v1/embeddings` schema** (commit `9d8deeb`, per the runtime
-   contract): media arrives as a chat-style `messages` array (alternative
-   to OpenAI `input`), **base64 data URIs only** — any remote URL is
-   rejected 400 at the API layer. The manifest advertises an embedding
-   modality only after a real probe request (tiny PNG / 0.5s WAV)
-   round-trips with the same dimensionality the text probe established
-   (contract §10.1: probed, never assumed).
-
-4. **Audio dependencies** (commit `ba372db`): declared as a project extra
-   using `soundfile` + `soxr` instead of `vllm[audio]`, because
-   `vllm[audio]` pulls torchcodec, which dlopens system ffmpeg libs and
-   raises `OSError` on import on no-root hosts (vLLM only guards
-   `ImportError`). soundfile bundles libsndfile.
-
-## Remaining gaps
-
-- **Video embeddings**: not supported. Video decode requires torchcodec,
-  which is deliberately uninstalled (needs system ffmpeg libs; no sudo on
-  this box). The manifest honestly advertises `[text, image, audio]`
-  because modalities are probed, not assumed.
-- **Multi-GPU topologies**: untested; single-GPU (`CUDA_VISIBLE_DEVICES=0`)
-  is the product topology and the only one validated here.
-- **No prolonged soak testing on CUDA**: the full and mixed-role pressure
-  suites exercise concurrent generation and embedding and remain healthy
-  afterward, but multi-hour memory stability is not yet a release gate.
-- **`VLLM_BACKEND=cuda` warning**: vLLM reports the appliance selector as an
-  unknown vLLM environment variable. The warning is cosmetic, but the
-  variable itself is required until the adapter's backend selector is moved
-  under a Sovereign-specific name.
+The earlier 2026-07-15 report covered the retired in-runtime multimodal
+embedding implementation and is not evidence for the backend that now ships.

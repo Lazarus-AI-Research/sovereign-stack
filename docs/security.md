@@ -22,9 +22,10 @@ Control never mounts the Docker socket. A dedicated proxy owns it and enforces:
 - append-only JSON audit records.
 
 Images, model revisions, and downloadable weights are pinned. Tagged release
-images carry build provenance/SBOM attestations and Sigstore signatures; the
-release archive and Metal agent are checksum- and signature-verified before
-installation.
+images carry build provenance/SBOM attestations and Sigstore signatures. The
+release archive and generation Metal agent are checksum- and signature-verified
+before installation; the Metal EmbeddingGemma executable is vendored inside
+that signed archive and verified again against its pinned checksum.
 
 Metadata tracing is enabled by default, while prompt and response logging are
 off. Backups and offline bundles exclude live secrets. Support requests should

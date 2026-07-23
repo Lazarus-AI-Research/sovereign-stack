@@ -27,7 +27,7 @@ The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
 owner-only credentials, pulls digest-pinned images from the signed release
 manifest, starts the stack, waits for both
-runtime roles, and runs the smoke suite. A Hugging Face token is only needed
+the generation runtime and embedding service, and runs the smoke suite. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.
 
@@ -53,7 +53,9 @@ sovereign up
 
 Re-running the same installer is idempotent: it replaces release code while
 preserving configuration, encrypted credentials, models, databases, reports,
-and backups.
+and backups. The EmbeddingGemma upgrade removes only the retired local
+embedding entries, preserves unrelated generation and remote model entries,
+and stores one-time `*.pre-embeddinggemma` configuration backups.
 
 The appliance is intentionally single-instance. Startup refuses to take over
 fixed SovereignStack containers owned by a different install directory; stop

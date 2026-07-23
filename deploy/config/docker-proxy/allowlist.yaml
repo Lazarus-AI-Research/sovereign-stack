@@ -20,6 +20,7 @@ allowed_export_images:
 
 allowed_services:
   - sovereign-runtime
+  - sovereign-embeddings
   - sovereign-gateway
   - sovereign-workspace
   - sovereign-evals
@@ -45,6 +46,8 @@ evals:
   env_keys:
     - RUNTIME_BASE_URL
     - LITELLM_BASE_URL
+    - SOVEREIGN_EMBEDDINGS_BASE_URL
+    - EMBEDDING_MODEL_PREF
     - PROMETHEUS_BASE_URL
     - SOVEREIGN_RUNTIME_API_KEY
     - LITELLM_MASTER_KEY

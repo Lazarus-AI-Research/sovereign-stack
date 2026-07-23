@@ -25,8 +25,10 @@ before it creates the appliance archive.
 3. Verify their Sigstore identities and run the Metal agent archive install
    check on Apple Silicon.
 4. Tag and push SovereignStack as `v<version>`.
-5. Wait for signed multi-architecture first-party images, SBOM/provenance
-   attestations, the signed release manifest, and the signed appliance archive.
+5. Confirm the workflow vendors the checksum-pinned EmbeddingGemma Metal
+   executable, then wait for signed multi-architecture first-party images,
+   SBOM/provenance attestations, the signed release manifest, and the signed
+   appliance archive.
 6. Install from the public one-command URL on clean certified Mac and CUDA
    hosts; run `sovereign status`, `sovereign smoke`, and `sovereign backup`.
 7. Build and install one same-platform offline bundle before announcing.

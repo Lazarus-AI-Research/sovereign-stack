@@ -9,15 +9,15 @@ func TestProfileRegistryCRUD(t *testing.T) {
 	registry := NewRegistry(filepath.Join(t.TempDir(), "embedding-profiles.yaml"))
 
 	profile := Profile{
-		Provider:        "sovereign-runtime",
-		Model:           "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
-		Revision:        "main",
-		ServedModelName: "embedding-omni-default",
-		Pooling:         "last",
+		Provider:        "embeddinggemma",
+		Model:           EmbeddingGemmaModel,
+		Revision:        "8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73",
+		ServedModelName: "embedding-gemma-default",
+		Pooling:         "mean",
 		Normalization:   "l2",
 		Modalities:      []string{"text"},
 	}
-	if err := registry.Put("text-compact", profile); err != nil {
+	if err := registry.Put("gemma-default", profile); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	if err := registry.Put("", profile); err == nil {
@@ -27,8 +27,8 @@ func TestProfileRegistryCRUD(t *testing.T) {
 		t.Fatal("profile without modalities accepted")
 	}
 
-	got, err := registry.Get("text-compact")
-	if err != nil || got.ServedModelName != "embedding-omni-default" {
+	got, err := registry.Get("gemma-default")
+	if err != nil || got.ServedModelName != "embedding-gemma-default" {
 		t.Fatalf("get: %v %+v", err, got)
 	}
 
@@ -37,10 +37,10 @@ func TestProfileRegistryCRUD(t *testing.T) {
 		t.Fatalf("list: %v %d", err, len(profiles))
 	}
 
-	if err := registry.Delete("text-compact"); err != nil {
+	if err := registry.Delete("gemma-default"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := registry.Get("text-compact"); err == nil {
+	if _, err := registry.Get("gemma-default"); err == nil {
 		t.Fatal("deleted profile still present")
 	}
 }
@@ -52,10 +52,10 @@ func TestProfileRegistryReadsProductDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list shipped profiles: %v", err)
 	}
-	if _, ok := profiles["omni-default"]; !ok {
-		t.Errorf("shipped omni-default profile missing: %v", profiles)
+	if _, ok := profiles["gemma-default"]; !ok {
+		t.Errorf("shipped gemma-default profile missing: %v", profiles)
 	}
-	if _, ok := profiles["text-compact"]; !ok {
-		t.Errorf("shipped text-compact profile missing: %v", profiles)
+	if len(profiles) != 1 {
+		t.Errorf("expected one shipped embedding profile, got: %v", profiles)
 	}
 }

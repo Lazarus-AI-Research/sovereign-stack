@@ -66,17 +66,18 @@ CONTROL_IMAGE="ghcr.io/lazarus-ai-research/sovereign-control:$VERSION"
 DOCKER_PROXY_IMAGE="ghcr.io/lazarus-ai-research/sovereign-docker-proxy:$VERSION"
 EVALS_IMAGE="ghcr.io/lazarus-ai-research/sovereign-evals:$VERSION"
 WORKSPACE_IMAGE="ghcr.io/lazarus-ai-research/sovereign-workspace:$VERSION"
+EMBEDDINGS_IMAGE=""
 if [[ "$PROFILE" == "metal-arm64" ]]; then
-  EMBEDDING_ALIAS="embedding-text-compact"
-  PASSAGE_PREFIX="search_document: "
-  QUERY_PREFIX="search_query: "
+  EMBEDDINGS_BASE_URL="http://host.docker.internal:42666/v1"
   RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-$VERSION"
 else
-  EMBEDDING_ALIAS="embedding-omni-default"
-  PASSAGE_PREFIX=""
-  QUERY_PREFIX=""
+  EMBEDDINGS_BASE_URL="http://sovereign-embeddings:42666/v1"
+  EMBEDDINGS_IMAGE="ghcr.io/lazarus-ai-research/sovereign-embeddings:$VERSION"
   RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-$VERSION"
 fi
+EMBEDDING_ALIAS="embedding-gemma-default"
+PASSAGE_PREFIX="title: none | text: "
+QUERY_PREFIX="task: search result | query: "
 
 MANIFEST_FILE="$RELEASE_ROOT/release/manifest.json"
 IMAGE_LOCK_FILE="$RELEASE_ROOT/release/images.env"
@@ -107,6 +108,7 @@ if [[ -f "$MANIFEST_FILE" ]]; then
     RUNTIME_IMAGE="$(locked_image SOVEREIGN_RUNTIME_METAL_IMAGE "$RUNTIME_IMAGE")"
   else
     RUNTIME_IMAGE="$(locked_image SOVEREIGN_RUNTIME_CUDA_IMAGE "$RUNTIME_IMAGE")"
+    EMBEDDINGS_IMAGE="$(locked_image SOVEREIGN_EMBEDDINGS_IMAGE "$EMBEDDINGS_IMAGE")"
   fi
 fi
 
@@ -126,6 +128,8 @@ SOVEREIGN_DOCKER_PROXY_IMAGE=$DOCKER_PROXY_IMAGE
 SOVEREIGN_EVALS_IMAGE=$EVALS_IMAGE
 SOVEREIGN_WORKSPACE_IMAGE=$WORKSPACE_IMAGE
 SOVEREIGN_RUNTIME_IMAGE=$RUNTIME_IMAGE
+SOVEREIGN_EMBEDDINGS_IMAGE=$EMBEDDINGS_IMAGE
+SOVEREIGN_EMBEDDINGS_BASE_URL=$EMBEDDINGS_BASE_URL
 
 CADDY_IMAGE=caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
 LITELLM_IMAGE=ghcr.io/berriai/litellm@sha256:f46d672e9d12a84e5dde046ff3865e0bf323e49f9f9b8eb08cd33c1713ea9627

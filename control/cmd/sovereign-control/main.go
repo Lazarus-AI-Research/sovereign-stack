@@ -39,6 +39,10 @@ func main() {
 
 	server := &api.Server{
 		Runtime: runtime.New(cmp.Or(os.Getenv("RUNTIME_BASE_URL"), "http://sovereign-runtime:8000")),
+		Embeddings: embeddings.NewClient(cmp.Or(
+			os.Getenv("SOVEREIGN_EMBEDDINGS_BASE_URL"),
+			"http://sovereign-embeddings:42666/v1",
+		)),
 		Proxy: dockerproxy.New(
 			cmp.Or(os.Getenv("DOCKER_PROXY_BASE_URL"), "http://sovereign-docker-proxy:8081"),
 			os.Getenv("DOCKER_PROXY_TOKEN"),
@@ -104,7 +108,7 @@ func main() {
 		bundleImages := []string{}
 		for _, key := range []string{
 			"SOVEREIGN_CONTROL_IMAGE", "SOVEREIGN_DOCKER_PROXY_IMAGE", "SOVEREIGN_EVALS_IMAGE",
-			"SOVEREIGN_WORKSPACE_IMAGE", "SOVEREIGN_RUNTIME_IMAGE", "CADDY_IMAGE", "LITELLM_IMAGE",
+			"SOVEREIGN_WORKSPACE_IMAGE", "SOVEREIGN_RUNTIME_IMAGE", "SOVEREIGN_EMBEDDINGS_IMAGE", "CADDY_IMAGE", "LITELLM_IMAGE",
 			"PGVECTOR_IMAGE", "PHOENIX_IMAGE", "PROMETHEUS_IMAGE", "GRAFANA_IMAGE", "LOKI_IMAGE", "OTEL_IMAGE",
 		} {
 			if image := os.Getenv(key); image != "" {
@@ -118,10 +122,8 @@ func main() {
 		server.Bundles = bundleDeps
 		runner.Register("bundle-create", bundleDeps.HandleCreate)
 		activator := embeddings.ActivateDeps{
-			Registry:   profiles,
-			ConfigPath: loader.ConfigPath,
-			Proxy:      server.Proxy,
-			Runtime:    server.Runtime,
+			Registry: profiles,
+			Service:  server.Embeddings,
 		}
 		runner.Register("profile-activate", activator.HandleActivate)
 		if vectorsURL := os.Getenv("PGVECTOR_CONNECTION_STRING"); vectorsURL != "" {

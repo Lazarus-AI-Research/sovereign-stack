@@ -29,7 +29,7 @@ BASE_URL="http://127.0.0.1:$HTTP_PORT"
 ensure_project_owner() {
   local container owner expected
   expected="$(cd "$SOVEREIGN_HOME" && pwd -P)"
-  for container in sovereign-postgres sovereign-runtime sovereign-caddy; do
+  for container in sovereign-postgres sovereign-runtime sovereign-embeddings sovereign-caddy; do
     docker inspect "$container" >/dev/null 2>&1 || continue
     owner="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container" 2>/dev/null || true)"
     if [[ "$owner" != "$expected" && "${SOVEREIGN_ALLOW_PROJECT_TAKEOVER:-0}" != 1 ]]; then
@@ -41,9 +41,57 @@ ensure_project_owner() {
   done
 }
 
+metal_embedding_label() {
+  local file="$SOVEREIGN_HOME/state/embeddinggemma-launchd-label"
+  [[ -s "$file" ]] || return 1
+  local label="$(<"$file")"
+  [[ "$label" == com.lazarus.sovereign-embeddinggemma.* ]] || return 1
+  printf '%s' "$label"
+}
+
+start_metal_embeddings() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  local label plist
+  label="$(metal_embedding_label)" || {
+    echo "error: the host embeddinggemma service is not installed" >&2
+    return 1
+  }
+  plist="$HOME/Library/LaunchAgents/$label.plist"
+  [[ -f "$plist" ]] || { echo "error: missing launchd service $plist" >&2; return 1; }
+  if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+  fi
+  launchctl kickstart -k "gui/$(id -u)/$label"
+}
+
+stop_metal_embeddings() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  local label
+  label="$(metal_embedding_label)" || return 0
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+}
+
 wait_ready() {
   local deadline=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700}))
-  echo "waiting for runtime readiness (first model download can take a while)..."
+  echo "waiting for generation and embedding readiness (first model load can take a while)..."
+  if [[ "$PROFILE" == metal-arm64 ]]; then
+    until curl -fsS http://127.0.0.1:42666/healthz >/dev/null 2>&1; do
+      (( SECONDS < deadline )) || {
+        echo "error: host embeddinggemma did not become ready before timeout" >&2
+        return 1
+      }
+      sleep 2
+    done
+  else
+    until [[ "$(docker inspect --format '{{.State.Health.Status}}' sovereign-embeddings 2>/dev/null || true)" == healthy ]]; do
+      (( SECONDS < deadline )) || {
+        compose logs --tail 120 sovereign-embeddings
+        echo "error: embeddinggemma did not become ready before timeout" >&2
+        return 1
+      }
+      sleep 2
+    done
+  fi
   until docker exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
     (( SECONDS < deadline )) || {
       compose ps
@@ -63,11 +111,31 @@ api_login() {
   local username password
   username="$(sed -n 's/^username=//p' "$SOVEREIGN_HOME/credentials")"
   password="$(sed -n 's/^password=//p' "$SOVEREIGN_HOME/credentials")"
+  [[ -z "${API_COOKIE:-}" ]] || rm -f "$API_COOKIE"
   API_COOKIE="$(mktemp "${TMPDIR:-/tmp}/sovereign-cookie.XXXXXX")"
   trap 'rm -f "${API_COOKIE:-}"' EXIT
   curl -fsS -c "$API_COOKIE" -H 'Content-Type: application/json' \
     -d "{\"username\":\"$username\",\"password\":\"$password\"}" \
     "$BASE_URL/api/control/v1/auth/login" >/dev/null
+}
+
+refresh_gateway_config() {
+  local deadline response
+  api_login
+  curl -fsS -b "$API_COOKIE" -X POST \
+    "$BASE_URL/api/control/v1/gateway/config/regenerate" >/dev/null
+  curl -fsS -b "$API_COOKIE" -X POST \
+    "$BASE_URL/api/control/v1/gateway/reload" >/dev/null
+  deadline=$((SECONDS + ${SOVEREIGN_GATEWAY_TIMEOUT:-180}))
+  until response="$(curl -fsS -b "$API_COOKIE" \
+    "$BASE_URL/api/control/v1/gateway/status" 2>/dev/null)" && \
+    printf '%s' "$response" | grep -q '"healthy":true'; do
+    (( SECONDS < deadline )) || {
+      echo "error: gateway did not become healthy after configuration reload" >&2
+      return 1
+    }
+    sleep 2
+  done
 }
 
 api_post_job() {
@@ -114,17 +182,26 @@ EOF
 case "${1:-help}" in
   up)
     ensure_project_owner
+    start_metal_embeddings
     if [[ ! -f "$SOVEREIGN_HOME/state/offline" ]]; then compose pull; fi
     compose up -d --remove-orphans
     wait_ready
+    refresh_gateway_config
     if [[ "${SOVEREIGN_SKIP_SMOKE:-0}" != 1 ]]; then
       compose --profile tools run --rm sovereign-evals suite smoke --report-dir /sovereign/reports
     fi
     echo "ready: $BASE_URL/"
     ;;
-  down) compose down ;;
+  down)
+    compose down
+    stop_metal_embeddings
+    ;;
   status)
     compose ps
+    if [[ "$PROFILE" == metal-arm64 ]]; then
+      curl -fsS http://127.0.0.1:42666/healthz || true
+      echo
+    fi
     curl -fsS "$BASE_URL/api/control/v1/health" || true
     echo
     ;;

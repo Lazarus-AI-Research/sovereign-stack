@@ -3,8 +3,9 @@ name: embedding
 description: Portable text-embedding evaluation for every certified profile
 checks:
   - type: runtime-readiness
+  - type: embedding-health
   - type: text-embedding
-    params: {target: runtime}
+    params: {target: embeddings, dimensions: 768}
   - type: text-embedding
     id: gateway-text-embedding
     params: {target: gateway}

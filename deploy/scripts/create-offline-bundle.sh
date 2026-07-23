@@ -17,7 +17,7 @@ Usage: create-offline-bundle.sh [options]
 
   --profile cuda-x86_64|metal-arm64
   --include-model <id>       Repeatable; accepts all, assistant-large,
-                             embedding-omni-default, embedding-text-compact
+                             embedding-gemma-default
   --include-models           Include the complete local model cache
   --output <archive.tar.gz>  Destination (default: ~/.sovereign/bundles/...)
   --no-pull                  Fail instead of pulling a missing image
@@ -88,6 +88,7 @@ IMAGE_KEYS=(
   SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE CADDY_IMAGE LITELLM_IMAGE
   PGVECTOR_IMAGE PHOENIX_IMAGE PROMETHEUS_IMAGE GRAFANA_IMAGE LOKI_IMAGE OTEL_IMAGE
 )
+[[ "$PROFILE" == cuda-x86_64 ]] && IMAGE_KEYS+=(SOVEREIGN_EMBEDDINGS_IMAGE)
 IMAGE_REFS=()
 IMAGE_JSON="$TMP_ROOT/images.jsonl"
 : > "$IMAGE_JSON"
@@ -129,16 +130,8 @@ if (( ${#INCLUDE_MODELS[@]} > 0 )); then
           MODEL_PATHS+=(hf/hub/models--google--gemma-4-E2B-it)
         fi
         ;;
-      embedding-omni-default)
-        [[ "$PROFILE" == cuda-x86_64 ]] || die "$model is not available on $PROFILE"
-        MODEL_PATHS+=(hf/hub/models--LCO-Embedding--LCO-Embedding-Omni-3B-2605)
-        ;;
-      embedding-text-compact)
-        if [[ "$PROFILE" == metal-arm64 ]]; then
-          MODEL_PATHS+=(metal/nomic-embed-text-v1.5.Q8_0.gguf)
-        else
-          MODEL_PATHS+=(hf/hub/models--nomic-ai--nomic-embed-text-v1.5)
-        fi
+      embedding-gemma-default)
+        MODEL_PATHS+=(embeddinggemma/embeddinggemma-300M-qat-Q4_0.gguf)
         ;;
       *)
         [[ "$model" != /* && "$model" != *..* && -e "$MODEL_ROOT/$model" ]] || \

@@ -31,6 +31,93 @@ grep -Eq '^SOVEREIGN_HOST_UID=[0-9]+$' "$TEST_HOME/.env"
 grep -Eq '^SOVEREIGN_HOST_GID=[0-9]+$' "$TEST_HOME/.env"
 [[ "$(readlink "$TEST_HOME/current")" == "$TEST_HOME/releases/$VERSION" ]]
 
+# Upgrades preserve unrelated generation and remote-model configuration while
+# replacing the retired runtime-hosted embedding profiles. Original files are
+# retained as one-time migration backups.
+cat > "$TEST_HOME/config/runtime.yaml" <<'EOF'
+schema_version: "1.1"
+runtime:
+  profile: metal-arm64
+roles:
+  generation:
+    enabled: true
+    task: generate
+    served_model_name: custom-generation
+  embedding:
+    enabled: true
+    task: embed
+    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
+    served_model_name: embedding-omni-default
+observability:
+  structured_logs: true
+EOF
+cat > "$TEST_HOME/config/embedding-profiles.yaml" <<'EOF'
+embedding_profiles:
+  custom-remote:
+    provider: custom
+    served_model_name: custom-remote-embedding
+    modalities: [text]
+  omni-default:
+    provider: sovereign-runtime
+    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
+    served_model_name: embedding-omni-default
+    modalities: [text, image, audio]
+EOF
+cat > "$TEST_HOME/config/model-registry.yaml" <<'EOF'
+models:
+  - id: custom-generation
+    role: generation
+    source: remote
+    model: custom/generation
+  - id: custom-remote-embedding
+    role: embedding
+    source: remote
+    model: custom/embedding
+  - id: embedding-omni-default
+    role: embedding
+    source: huggingface
+    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
+EOF
+SOVEREIGN_HOME="$TEST_HOME" \
+SOVEREIGN_BIN_DIR="$TEST_HOME/bin" \
+SOVEREIGN_SOURCE_DIR="$ROOT" \
+SOVEREIGN_INCLUDE_MODELS=0 \
+SOVEREIGN_SKIP_START=1 \
+  "$ROOT/deploy/scripts/install.sh" --profile metal-arm64
+grep -q '^    served_model_name: custom-generation$' "$TEST_HOME/config/runtime.yaml"
+grep -q '^observability:$' "$TEST_HOME/config/runtime.yaml"
+grep -A2 '^  embedding:$' "$TEST_HOME/config/runtime.yaml" | grep -q '^    enabled: false$'
+grep -q '^  custom-remote:$' "$TEST_HOME/config/embedding-profiles.yaml"
+grep -q '^  gemma-default:$' "$TEST_HOME/config/embedding-profiles.yaml"
+grep -q '^  - id: custom-remote-embedding$' "$TEST_HOME/config/model-registry.yaml"
+[[ "$(grep -c '^  - id: embedding-gemma-default$' "$TEST_HOME/config/model-registry.yaml")" == 1 ]]
+! grep -Fq 'LCO-Embedding/LCO-Embedding-Omni-3B-2605' \
+  "$TEST_HOME/config/runtime.yaml" "$TEST_HOME/config/embedding-profiles.yaml" \
+  "$TEST_HOME/config/model-registry.yaml"
+grep -Fq 'LCO-Embedding/LCO-Embedding-Omni-3B-2605' \
+  "$TEST_HOME/config/runtime.yaml.pre-embeddinggemma"
+
+# The Metal embedding service uses an install-scoped launchd label, escapes
+# paths in its owner-only plist, restarts on failure, and uninstalls only its
+# own job.
+METAL_SERVICE_HOME="$TEST_HOME/metal & service"
+mkdir -p "$METAL_SERVICE_HOME/bin" "$METAL_SERVICE_HOME/models"
+printf '#!/usr/bin/env sh\nexit 0\n' > "$METAL_SERVICE_HOME/bin/embeddinggemma"
+chmod 755 "$METAL_SERVICE_HOME/bin/embeddinggemma"
+: > "$METAL_SERVICE_HOME/models/embeddinggemma.gguf"
+SOVEREIGN_HOME="$METAL_SERVICE_HOME" \
+EMBEDDINGGEMMA_BINARY="$METAL_SERVICE_HOME/bin/embeddinggemma" \
+EMBEDDINGGEMMA_MODEL="$METAL_SERVICE_HOME/models/embeddinggemma.gguf" \
+  "$ROOT/deploy/scripts/install-embeddinggemma-metal.sh"
+METAL_LABEL="$(<"$METAL_SERVICE_HOME/state/embeddinggemma-launchd-label")"
+METAL_PLIST="$HOME/Library/LaunchAgents/$METAL_LABEL.plist"
+[[ -f "$METAL_PLIST" ]]
+grep -q '<key>KeepAlive</key>' "$METAL_PLIST"
+grep -q 'metal &amp; service' "$METAL_PLIST"
+plutil -lint "$METAL_PLIST" >/dev/null
+SOVEREIGN_HOME="$METAL_SERVICE_HOME" "$ROOT/deploy/scripts/uninstall-embeddinggemma-metal.sh"
+[[ ! -e "$METAL_PLIST" ]]
+
 # The documented bootstrap is piped into Bash, where BASH_SOURCE[0] is unset.
 # Exercise that exact shell form early without touching a real installation.
 PIPE_HOME="$TEST_HOME/piped-install"
@@ -53,6 +140,7 @@ SOVEREIGN_OS_RELEASE="$ROOT/tests/fixtures/os-release" \
 SOVEREIGN_HOME="$CUDA_HOME" \
 SOVEREIGN_BIN_DIR="$CUDA_HOME/bin" \
 SOVEREIGN_SOURCE_DIR="$ROOT" \
+SOVEREIGN_INCLUDE_MODELS=0 \
 SOVEREIGN_SKIP_START=1 \
   "$ROOT/deploy/scripts/install.sh" --profile cuda-x86_64
 [[ "$(readlink "$CUDA_HOME/current")" == "$CUDA_HOME/releases/$VERSION" ]]

@@ -25,6 +25,7 @@ IMAGE_LOCK_KEYS = [
     ("SOVEREIGN_WORKSPACE_IMAGE", "sovereign-workspace"),
     ("SOVEREIGN_RUNTIME_CUDA_IMAGE", "sovereign-runtime-cuda"),
     ("SOVEREIGN_RUNTIME_METAL_IMAGE", "sovereign-runtime-metal"),
+    ("SOVEREIGN_EMBEDDINGS_IMAGE", "sovereign-embeddings"),
 ]
 
 
@@ -58,6 +59,7 @@ def main() -> None:
         ("sovereign-workspace", f"{REGISTRY}/sovereign-workspace:{version}", ["linux/amd64", "linux/arm64"]),
         ("sovereign-runtime-cuda", f"{REGISTRY}/sovereign-runtime:cuda-x86_64-{version}", ["linux/amd64"]),
         ("sovereign-runtime-metal", f"{REGISTRY}/sovereign-runtime:metal-arm64-{version}", ["linux/arm64"]),
+        ("sovereign-embeddings", f"{REGISTRY}/sovereign-embeddings:{version}", ["linux/amd64"]),
     ]
     images = [
         {
@@ -98,6 +100,7 @@ def main() -> None:
         "supported_profiles": source["supported_profiles"],
         "images": images,
         "models": models,
+        "assets": source.get("assets", []),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

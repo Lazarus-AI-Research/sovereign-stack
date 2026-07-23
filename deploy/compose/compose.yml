@@ -43,6 +43,7 @@ services:
       DATABASE_URL: ${CONTROL_DATABASE_URL}
       LITELLM_BASE_URL: http://sovereign-gateway:4000
       RUNTIME_BASE_URL: http://sovereign-runtime:8000
+      SOVEREIGN_EMBEDDINGS_BASE_URL: ${SOVEREIGN_EMBEDDINGS_BASE_URL}
       DOCKER_PROXY_BASE_URL: http://sovereign-docker-proxy:8081
       PROMETHEUS_BASE_URL: http://prometheus:9090
       PHOENIX_BASE_URL: http://phoenix:6006

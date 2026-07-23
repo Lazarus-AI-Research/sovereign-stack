@@ -19,8 +19,8 @@ type SecretResolver interface {
 
 // GenerateConfig renders the LiteLLM config from the product's registries
 // (design.md §2.2: generated configuration, UI never exposed). Every stable
-// alias — generation models and embedding profiles — routes to the single
-// runtime endpoint; remote/cloud models keep their registry-declared routes.
+// alias routes to its owning service; remote/cloud models keep their
+// registry-declared routes.
 func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Registry, profiles *embeddings.Registry, secrets SecretResolver) error {
 	entries, err := modelRegistry.List()
 	if err != nil {
@@ -33,7 +33,7 @@ func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Regi
 
 	seen := map[string]bool{}
 	var modelList []map[string]any
-	addRuntimeRoute := func(alias string) {
+	addOpenAIRoute := func(alias, baseURL, apiKey string) {
 		if alias == "" || seen[alias] {
 			return
 		}
@@ -42,17 +42,17 @@ func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Regi
 			"model_name": alias,
 			"litellm_params": map[string]any{
 				"model":    "openai/" + alias,
-				"api_base": "http://sovereign-runtime:8000/v1",
-				"api_key":  "os.environ/SOVEREIGN_RUNTIME_API_KEY",
+				"api_base": baseURL,
+				"api_key":  apiKey,
 			},
 		})
 	}
 
 	// Product aliases always route: the generation alias plus every
 	// embedding profile's served name.
-	addRuntimeRoute("assistant-large")
+	addOpenAIRoute("assistant-large", "http://sovereign-runtime:8000/v1", "os.environ/SOVEREIGN_RUNTIME_API_KEY")
 	for _, profile := range profileMap {
-		addRuntimeRoute(profile.ServedModelName)
+		addOpenAIRoute(profile.ServedModelName, "os.environ/SOVEREIGN_EMBEDDINGS_BASE_URL", "not-required")
 	}
 	for _, entry := range entries {
 		if entry.Source != "remote" && entry.Source != "cloud" {

@@ -23,22 +23,15 @@
       "context_length": 32768
     },
     "embedding": {
-      "enabled": true,
-      "status": "healthy",
-      "task": "embed",
-      "served_model_name": "embedding-omni-default",
-      "engine_model": "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
-      "revision": "immutable-revision",
-      "dimensions": 2048,
-      "pooling": "last",
-      "normalization": "l2",
-      "modalities": ["text", "image", "audio"]
+      "enabled": false,
+      "status": "disabled",
+      "task": "embed"
     }
   },
   "resource_policy": {
     "enforcement": "best_effort",
     "generation_memory_weight": 82,
-    "embedding_memory_weight": 18
+    "embedding_memory_weight": 1
   },
   "accelerator": {
     "vendor": "nvidia",

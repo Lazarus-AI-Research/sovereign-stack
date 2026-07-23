@@ -40,9 +40,9 @@ func create(t *testing.T, ctx context.Context, store *Store, profile string) Ver
 		WorkspaceID:    workspace,
 		ProviderSlug:   "default",
 		ProfileID:      profile,
-		ModelID:        "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
-		ModelRevision:  "main",
-		Dimensions:     1024,
+		ModelID:        "ggml-org/embeddinggemma-300M-qat-q4_0-GGUF",
+		ModelRevision:  "8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73",
+		Dimensions:     768,
 		Normalization:  "l2",
 		DistanceMetric: "cosine",
 	})
@@ -64,8 +64,8 @@ func TestCreateRequiresDiscoveredDimensions(t *testing.T) {
 
 func TestActivateIsAtomicPerWorkspace(t *testing.T) {
 	ctx, store := testStore(t)
-	first := create(t, ctx, store, "text-compact")
-	second := create(t, ctx, store, "omni-default")
+	first := create(t, ctx, store, "gemma-default")
+	second := create(t, ctx, store, "gemma-reduced")
 	store.Progress(ctx, first.ID, 1, 1, 1)
 	store.Progress(ctx, second.ID, 1, 1, 1)
 
@@ -102,7 +102,7 @@ func TestActivateIsAtomicPerWorkspace(t *testing.T) {
 
 func TestActiveVersionCannotBeDeleted(t *testing.T) {
 	ctx, store := testStore(t)
-	version := create(t, ctx, store, "text-compact")
+	version := create(t, ctx, store, "gemma-default")
 	store.Progress(ctx, version.ID, 1, 1, 1)
 	if _, err := store.Activate(ctx, version.ID); err != nil {
 		t.Fatalf("activate: %v", err)
@@ -110,7 +110,7 @@ func TestActiveVersionCannotBeDeleted(t *testing.T) {
 	if err := store.Delete(ctx, version.ID); err == nil {
 		t.Fatal("active version deleted")
 	}
-	replacement := create(t, ctx, store, "omni-default")
+	replacement := create(t, ctx, store, "gemma-reduced")
 	store.Progress(ctx, replacement.ID, 1, 1, 1)
 	store.Activate(ctx, replacement.ID)
 	if err := store.Delete(ctx, version.ID); err != nil {

@@ -190,9 +190,9 @@ function Knowledge({ run }: { run: RunAction }) {
 
   return <>
     <section className="card">
-      <PanelTitle title="Embedding profiles" subtitle="Dimensions are discovered from the loaded runtime; prefixes and preprocessing are versioned with each index." />
+      <PanelTitle title="Embedding profiles" subtitle="Dimensions are discovered from the dedicated service; prefixes and preprocessing are versioned with each index." />
       <div className="profile-grid">{Object.entries(profiles).map(([id, profile]) => <article className="profile" key={id}>
-        <div className="row"><h3>{id}</h3><StatePill state={profile.modalities.length > 1 ? "omni" : "text"} /></div>
+        <div className="row"><h3>{id}</h3><StatePill state={profile.modalities.length > 1 ? "multimodal" : "text"} /></div>
         <p className="mono clip">{profile.model}</p><p>{profile.modalities.join(" · ")} · {profile.distance_metric} · {profile.normalization || "none"}</p>
         <div className="actions"><button className="small secondary" onClick={() => run(`Validate ${id}`, async () => { const result = await api.validateProfile(id); setValidation(JSON.stringify(result)); })}>Validate</button>
           <button className="small" onClick={() => run(`Activate ${id}`, async () => { await completeJob(await api.activateProfile(id)); await refresh(); })}>Activate</button></div>
@@ -224,7 +224,7 @@ function Knowledge({ run }: { run: RunAction }) {
 function Evaluations({ run }: { run: RunAction }) {
   const suites = [
     ["smoke", "Release health"], ["quick", "Quick benchmark"], ["embedding", "Portable embedding"],
-    ["retrieval", "Retrieval quality"], ["mixed-role", "Mixed-role pressure"], ["omni-embedding", "Cross-modal retrieval"], ["full", "Full benchmark"],
+    ["retrieval", "Retrieval quality"], ["mixed-role", "Mixed-role pressure"], ["full", "Full benchmark"],
   ];
   const [results, setResults] = useState<string[]>([]);
   const [selected, setSelected] = useState<EvalReport | null>(null);

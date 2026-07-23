@@ -13,6 +13,13 @@ REPOSITORY="${SOVEREIGN_GITHUB_REPOSITORY:-Lazarus-AI-Research/sovereign-stack}"
 RELEASE_URL="${SOVEREIGN_RELEASE_URL:-}"
 OFFLINE_BUNDLE=""
 OFFLINE_MODE=0
+EMBEDDINGGEMMA_VERSION=v0.3.1
+EMBEDDINGGEMMA_METAL_ASSET=embeddinggemma-darwin-arm64-metal
+EMBEDDINGGEMMA_METAL_SHA256=c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5
+EMBEDDINGGEMMA_MODEL_REPOSITORY=ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
+EMBEDDINGGEMMA_MODEL_REVISION=8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73
+EMBEDDINGGEMMA_MODEL_ARTIFACT=embeddinggemma-300M-qat-Q4_0.gguf
+EMBEDDINGGEMMA_MODEL_SHA256=50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -214,6 +221,10 @@ if $FIRST_CONFIG; then
   else
     cp "$TARGET/deploy/config/runtime.yaml" "$SOVEREIGN_HOME/config/runtime.yaml"
   fi
+else
+  SOVEREIGN_HOME="$SOVEREIGN_HOME" SOVEREIGN_PROFILE="$PROFILE" \
+  SOVEREIGN_RELEASE_ROOT="$TARGET" \
+    "$TARGET/deploy/scripts/migrate-embeddinggemma.sh"
 fi
 
 SOVEREIGN_HOME="$SOVEREIGN_HOME" SOVEREIGN_PROFILE="$PROFILE" SOVEREIGN_VERSION="$VERSION" \
@@ -250,6 +261,20 @@ download_hf() {
   mv "$destination.part" "$destination"
 }
 
+if [[ "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; then
+  say "Installing pinned EmbeddingGemma model"
+  EMBEDDING_MODEL_DIR="$SOVEREIGN_HOME/models/embeddinggemma"
+  EMBEDDING_MODEL="$EMBEDDING_MODEL_DIR/$EMBEDDINGGEMMA_MODEL_ARTIFACT"
+  if (( OFFLINE_MODE == 1 )); then
+    [[ -f "$EMBEDDING_MODEL" ]] || die "offline bundle does not contain embedding-gemma-default weights"
+    [[ "$(sha256 "$EMBEDDING_MODEL")" == "$EMBEDDINGGEMMA_MODEL_SHA256" ]] || \
+      die "offline embedding-gemma-default weights failed checksum verification"
+  else
+    download_hf "$EMBEDDINGGEMMA_MODEL_REPOSITORY" "$EMBEDDINGGEMMA_MODEL_REVISION" \
+      "$EMBEDDINGGEMMA_MODEL_ARTIFACT" "$EMBEDDINGGEMMA_MODEL_SHA256" "$EMBEDDING_MODEL"
+  fi
+fi
+
 if [[ "$PROFILE" == metal-arm64 && "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; then
   say "Installing pinned Metal runtime and models"
   AGENT_DIST="$SOVEREIGN_HOME/runtime-dist/$VERSION"
@@ -275,15 +300,36 @@ if [[ "$PROFILE" == metal-arm64 && "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; the
   if (( OFFLINE_MODE == 1 )); then
     [[ -f "$MODELS/gemma-4-E2B_q4_0-it.gguf" ]] || die "offline bundle does not contain assistant-large weights"
     [[ -f "$MODELS/gemma-4-E2B-it-mmproj.gguf" ]] || die "offline bundle does not contain the Gemma multimodal projector"
-    [[ -f "$MODELS/nomic-embed-text-v1.5.Q8_0.gguf" ]] || die "offline bundle does not contain embedding-text-compact weights"
   fi
   download_hf google/gemma-4-E2B-it-qat-q4_0-gguf 69536a21d70340464240401ba38223d805f6a709 \
     gemma-4-E2B_q4_0-it.gguf 3646b4c147cd235a44d91df1546d3b7d8e29b547dbe4e1f80856419aa455e6fd "$MODELS/gemma-4-E2B_q4_0-it.gguf"
   download_hf google/gemma-4-E2B-it-qat-q4_0-gguf 69536a21d70340464240401ba38223d805f6a709 \
     gemma-4-E2B-it-mmproj.gguf 58c187648007cab392bd5678b87e862c3e8794017deb945feea2cf256195e96a "$MODELS/gemma-4-E2B-it-mmproj.gguf"
-  download_hf nomic-ai/nomic-embed-text-v1.5-GGUF 0188c9bf409793f810680a5a431e7b899c46104c \
-    nomic-embed-text-v1.5.Q8_0.gguf 3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7 "$MODELS/nomic-embed-text-v1.5.Q8_0.gguf"
   SOVEREIGN_AGENT_HOME="$SOVEREIGN_HOME" "$AGENT_DIST/agent-dist/install-agent.sh"
+
+  EMBEDDING_DIST="$AGENT_DIST/embeddinggemma"
+  EMBEDDING_BINARY="$EMBEDDING_DIST/embeddinggemma"
+  if [[ ! -x "$EMBEDDING_BINARY" ]]; then
+    (( OFFLINE_MODE == 0 )) || die "offline bundle does not contain the embeddinggemma Metal binary"
+    mkdir -p "$EMBEDDING_DIST"
+    if [[ -f "$TARGET/deploy/assets/$EMBEDDINGGEMMA_METAL_ASSET" ]]; then
+      cp "$TARGET/deploy/assets/$EMBEDDINGGEMMA_METAL_ASSET" "$EMBEDDING_BINARY.part"
+    else
+      # Source-tree developer installs do not carry release binaries. Public
+      # release archives vendor this exact file and are Sigstore-verified above.
+      curl -fsSL --retry 4 -o "$EMBEDDING_BINARY.part" \
+        "https://github.com/QuixiAI/embeddinggemma.c/releases/download/$EMBEDDINGGEMMA_VERSION/$EMBEDDINGGEMMA_METAL_ASSET"
+    fi
+    [[ "$(sha256 "$EMBEDDING_BINARY.part")" == "$EMBEDDINGGEMMA_METAL_SHA256" ]] || \
+      die "embeddinggemma Metal binary checksum mismatch"
+    mv "$EMBEDDING_BINARY.part" "$EMBEDDING_BINARY"
+    chmod 755 "$EMBEDDING_BINARY"
+  fi
+  install -m 644 "$TARGET/deploy/assets/embeddinggemma.c.LICENSE" "$EMBEDDING_DIST/LICENSE"
+  EMBEDDINGGEMMA_BINARY="$EMBEDDING_BINARY" \
+  EMBEDDINGGEMMA_MODEL="$SOVEREIGN_HOME/models/embeddinggemma/$EMBEDDINGGEMMA_MODEL_ARTIFACT" \
+  SOVEREIGN_HOME="$SOVEREIGN_HOME" \
+    "$TARGET/deploy/scripts/install-embeddinggemma-metal.sh"
 fi
 
 if [[ "${SOVEREIGN_SKIP_START:-0}" != 1 ]]; then

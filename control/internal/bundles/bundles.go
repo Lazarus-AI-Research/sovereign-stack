@@ -181,17 +181,8 @@ func modelPaths(profile string, requested []string) ([]string, error) {
 			} else {
 				paths = append(paths, "hf/hub/models--google--gemma-4-E2B-it")
 			}
-		case "embedding-omni-default":
-			if profile != "cuda-x86_64" {
-				return nil, fmt.Errorf("%s is not supported by %s", id, profile)
-			}
-			paths = append(paths, "hf/hub/models--LCO-Embedding--LCO-Embedding-Omni-3B-2605")
-		case "embedding-text-compact":
-			if profile == "metal-arm64" {
-				paths = append(paths, "metal/nomic-embed-text-v1.5.Q8_0.gguf")
-			} else {
-				paths = append(paths, "hf/hub/models--nomic-ai--nomic-embed-text-v1.5")
-			}
+		case "embedding-gemma-default":
+			paths = append(paths, "embeddinggemma/embeddinggemma-300M-qat-Q4_0.gguf")
 		default:
 			return nil, fmt.Errorf("unknown model id %q", id)
 		}

@@ -12,12 +12,7 @@ model_list:
         model: openai/assistant-large
       model_name: assistant-large
     - litellm_params:
-        api_base: http://sovereign-runtime:8000/v1
-        api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
-        model: openai/embedding-omni-default
-      model_name: embedding-omni-default
-    - litellm_params:
-        api_base: http://sovereign-runtime:8000/v1
-        api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
-        model: openai/embedding-text-compact
-      model_name: embedding-text-compact
+        api_base: os.environ/SOVEREIGN_EMBEDDINGS_BASE_URL
+        api_key: not-required
+        model: openai/embedding-gemma-default
+      model_name: embedding-gemma-default

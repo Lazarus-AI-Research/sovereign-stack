@@ -167,13 +167,13 @@ paths:
     parameters: [{$ref: "#/components/parameters/ID"}]
     post:
       operationId: validateEmbeddingProfile
-      summary: Compare a profile with the loaded embedding role
+      summary: Probe a profile against the dedicated embedding service
       responses: {"200": {$ref: "#/components/responses/Document"}}
   /embedding-profiles/{id}/activate:
     parameters: [{$ref: "#/components/parameters/ID"}]
     post:
       operationId: activateEmbeddingProfile
-      summary: Load an embedding profile
+      summary: Verify and activate an embedding profile
       responses: {"202": {$ref: "#/components/responses/Accepted"}}
 
   /workspaces:

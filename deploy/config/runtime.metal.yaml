@@ -30,18 +30,8 @@ roles:
     reasoning_parser: "off"
 
   embedding:
-    enabled: true
+    enabled: false
     task: embed
-    source: local
-    model: nomic-ai/nomic-embed-text-v1.5-GGUF
-    revision: 0188c9bf409793f810680a5a431e7b899c46104c
-    served_model_name: embedding-text-compact
-    priority: low
-    memory_weight: 20
-    max_concurrent_requests: 2
-    throttle_when_generation_queue_above: 2
-    pooling: mean
-    normalization: l2
 
 observability:
   prometheus: true

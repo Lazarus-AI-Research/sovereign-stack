@@ -50,7 +50,7 @@ class SuiteContext:
         return self.role("generation").get("served_model_name", "assistant-large")
 
     def embedding_alias(self) -> str:
-        return self.role("embedding").get("served_model_name", "embedding-omni-default")
+        return self.endpoints.embedding_model
 
 
 REGISTRY: dict[str, Callable[[SuiteContext, dict], Result]] = {}
@@ -79,6 +79,14 @@ def runtime_readiness(ctx: SuiteContext, params: dict) -> Result:
     body = resp.json()
     ok = resp.status_code == 200 and body.get("ready") is True
     return ok, f"state={body.get('state')}"
+
+
+@register("embedding-health")
+def embedding_health(ctx: SuiteContext, params: dict) -> Result:
+    with ctx.client("embeddings") as client:
+        resp = client.get("/healthz")
+    ok = resp.status_code == 200
+    return ok, f"status {resp.status_code}"
 
 
 @register("runtime-roles-loaded")
@@ -164,20 +172,16 @@ def _embedding_vector(ctx: SuiteContext, target: str, text: str) -> list[float] 
 
 @register("text-embedding")
 def text_embedding(ctx: SuiteContext, params: dict) -> Result:
-    role = ctx.role("embedding")
-    if not role.get("enabled"):
-        return True, SKIPPED + "embedding role disabled"
     target = params.get("target", "gateway")
     vector = _embedding_vector(ctx, target, "sovereign smoke check")
     if isinstance(vector, str):
         return False, vector
-    dims = role.get("dimensions")
+    dims = params.get("dimensions", 768)
     if dims and len(vector) != dims:
         return False, f"[{target}] dim {len(vector)} != manifest {dims}"
-    if role.get("normalization") == "l2":
-        norm = math.sqrt(sum(v * v for v in vector))
-        if abs(norm - 1.0) > 1e-2:
-            return False, f"[{target}] L2 norm {norm:.4f} != 1"
+    norm = math.sqrt(sum(v * v for v in vector))
+    if abs(norm - 1.0) > 1e-2:
+        return False, f"[{target}] L2 norm {norm:.4f} != 1"
     return True, f"[{target}] dim={len(vector)}"
 
 
@@ -289,17 +293,13 @@ def gateway_models(ctx: SuiteContext, params: dict) -> Result:
     if resp.status_code != 200:
         return False, f"status {resp.status_code}"
     ids = {m.get("id") for m in resp.json().get("data", [])}
-    expected = {ctx.generation_alias()}
-    if ctx.role("embedding").get("enabled"):
-        expected.add(ctx.embedding_alias())
+    expected = {ctx.generation_alias(), ctx.embedding_alias()}
     missing = expected - ids
     return not missing, f"missing: {sorted(missing)}" if missing else f"aliases: {sorted(expected)}"
 
 
 @register("pgvector-roundtrip")
 def pgvector_roundtrip(ctx: SuiteContext, params: dict) -> Result:
-    if not ctx.role("embedding").get("enabled"):
-        return True, SKIPPED + "embedding role disabled"
     import psycopg
 
     vector = _embedding_vector(ctx, params.get("target", "gateway"), "pgvector roundtrip")

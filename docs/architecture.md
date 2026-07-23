@@ -7,18 +7,21 @@ private Compose network:
 browser → Caddy :8880 → AnythingLLM workspace
                     └→ Sovereign Control /api/control/v1
 
-AnythingLLM → LiteLLM gateway → Sovereign Runtime :8000
+AnythingLLM → LiteLLM gateway → Sovereign Runtime :8000 (generation)
+                           └──→ embeddinggemma :42666 (embeddings)
         └──→ PostgreSQL + pgvector
 
 Sovereign Control → restricted Docker proxy → Docker socket
-                  → runtime, gateway, workspace, evals, backups, bundles
+                  → runtime, embeddings, gateway, workspace, evals, backups, bundles
 ```
 
 Caddy is the only host-published service. LiteLLM's UI is never exposed;
 Control owns model routes, keys, budgets, and encrypted provider credentials.
-The runtime presents one OpenAI-compatible endpoint with generation and
-embedding roles. On Apple Silicon the contract container delegates inference
-to a bearer-authenticated host Metal agent; consumers see the same API.
+LiteLLM presents one OpenAI-compatible product endpoint while routing
+generation and embedding requests to independent services. On CUDA,
+`embeddinggemma` is a private sibling container. On Apple Silicon it is a
+loopback-only, launchd-managed Metal process reached from Docker Desktop via
+`host.docker.internal`.
 
 Persistent state lives in named Docker volumes and `~/.sovereign`. Release code
 is versioned under `releases/<version>` and selected through `current`; config,

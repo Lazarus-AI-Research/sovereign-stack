@@ -11,7 +11,7 @@ import concurrent.futures
 import statistics
 import time
 
-from sovereign_evals.smoke.checks import SKIPPED, SuiteContext, register
+from sovereign_evals.smoke.checks import SuiteContext, register
 
 
 def _percentiles(samples_ms: list[float]) -> dict:
@@ -64,8 +64,6 @@ def benchmark_generation(ctx: SuiteContext, params: dict):
 
 @register("benchmark-embedding")
 def benchmark_embedding(ctx: SuiteContext, params: dict):
-    if not ctx.role("embedding").get("enabled"):
-        return True, SKIPPED + "embedding role disabled"
     target = params.get("target", "gateway")
     batch = int(params.get("batch_size", 16))
     batches = int(params.get("batches", 5))
@@ -84,8 +82,6 @@ def benchmark_embedding(ctx: SuiteContext, params: dict):
 @register("benchmark-mixed")
 def benchmark_mixed(ctx: SuiteContext, params: dict):
     """§19.2 mixed generation and embedding pressure; flags starvation."""
-    if not ctx.role("embedding").get("enabled"):
-        return True, SKIPPED + "embedding role disabled"
     target = params.get("target", "gateway")
     generation_requests = int(params.get("generation_requests", 4))
     embedding_batches = int(params.get("embedding_batches", 4))

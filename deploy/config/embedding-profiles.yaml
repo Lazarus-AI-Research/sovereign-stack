@@ -4,36 +4,20 @@
 # never inferred from the model name (design.md §10.1).
 
 embedding_profiles:
-  omni-default:
-    provider: sovereign-runtime
+  gemma-default:
+    provider: embeddinggemma
     source: huggingface
-    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
-    revision: 93aadb155d07c16018cc241efe03e4c278e6001c
-    served_model_name: embedding-omni-default
-    pooling: last
-    normalization: l2
-    distance_metric: cosine
-    chunking_strategy: recursive-v1
-    preprocessing_version: sovereign-embed-v1
-    modalities:
-      - text
-      - image
-      - audio
-
-  text-compact:
-    provider: sovereign-runtime
-    source: huggingface
-    model: nomic-ai/nomic-embed-text-v1.5
-    revision: e9b6763023c676ca8431644204f50c2b100d9aab
-    artifact: model.safetensors
-    sha256: 9e7d262b1fe5ea350782829496efa831901b77486bbde1cea54a4c822d010d5c
-    served_model_name: embedding-text-compact
+    model: ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
+    revision: 8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73
+    artifact: embeddinggemma-300M-qat-Q4_0.gguf
+    sha256: 50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26
+    served_model_name: embedding-gemma-default
     pooling: mean
     normalization: l2
     distance_metric: cosine
-    query_prefix: "search_query: "
-    document_prefix: "search_document: "
+    query_prefix: "task: search result | query: "
+    document_prefix: "title: none | text: "
     chunking_strategy: recursive-v1
-    preprocessing_version: sovereign-nomic-v1
+    preprocessing_version: sovereign-embeddinggemma-v1
     modalities:
       - text

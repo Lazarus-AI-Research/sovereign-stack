@@ -1,0 +1,25 @@
+# embeddinggemma.c v0.3.1, packaged as the isolated CUDA embedding service.
+# Both the release executable and CUDA base are immutable pins.
+
+FROM alpine:3.22@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6 AS fetch
+
+ARG EMBEDDINGGEMMA_VERSION=v0.3.1
+ARG EMBEDDINGGEMMA_SHA256=6ed7b9eabb5d9f835a7a485fddc96e10b05a25e2b959faa761b55f4be5378de3
+
+RUN apk add --no-cache curl
+RUN curl -fsSL --retry 4 \
+      -o /embeddinggemma \
+      "https://github.com/QuixiAI/embeddinggemma.c/releases/download/${EMBEDDINGGEMMA_VERSION}/embeddinggemma-linux-x86_64-cuda" \
+    && echo "${EMBEDDINGGEMMA_SHA256}  /embeddinggemma" | sha256sum -c - \
+    && chmod 0755 /embeddinggemma
+
+FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04@sha256:1199283a7fd5fc7dcb472ea4c6b6d8eb378ef8c0b9aae5e731491c01a219ca43
+
+COPY --from=fetch /embeddinggemma /usr/local/bin/embeddinggemma
+COPY deploy/assets/embeddinggemma.c.LICENSE /usr/share/licenses/embeddinggemma.c/LICENSE
+
+USER 65532:65532
+EXPOSE 42666
+
+ENTRYPOINT ["/usr/local/bin/embeddinggemma"]
+CMD ["--bind", "0.0.0.0", "--port", "42666", "--backend", "cuda", "--model", "/models/embeddinggemma-300M-qat-Q4_0.gguf"]

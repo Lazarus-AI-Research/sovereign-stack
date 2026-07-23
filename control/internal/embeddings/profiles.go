@@ -1,6 +1,6 @@
 // Package embeddings reads and manages embedding profiles (design.md §10,
 // §18.6). Profiles are file-backed product configuration; dimensions are
-// never stored here — they are discovered from the runtime (§10.1).
+// never stored here — they are discovered from the embedding service (§10.1).
 package embeddings
 
 import (

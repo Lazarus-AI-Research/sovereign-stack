@@ -84,6 +84,7 @@ func TestMetrics(t *testing.T) {
 		"sovereign_control_up 1",
 		"sovereign_control_runtime_up 1",
 		"sovereign_control_gateway_up 0",
+		"sovereign_control_embeddings_up 0",
 		"sovereign_control_docker_proxy_up 1",
 	} {
 		if !strings.Contains(rec.Body.String(), metric) {
