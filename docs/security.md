@@ -45,6 +45,10 @@ images carry build provenance/SBOM attestations and Sigstore signatures. The
 release archive and generation Metal agent are checksum- and signature-verified
 before installation; the Metal EmbeddingGemma executable is vendored inside
 that signed archive and verified again against its pinned checksum.
+When Apple signing credentials are unavailable, the macOS bootstrap package is
+explicitly named `-unsigned.pkg` and produces the expected Gatekeeper warnings.
+It still has detached SHA-256 and GitHub OIDC/Sigstore verification artifacts,
+and its bootstrap verifies the signed appliance archive before installation.
 
 Metadata tracing is enabled by default, while prompt and response logging are
 off. Backups and offline bundles exclude live secrets. Portal-generated support

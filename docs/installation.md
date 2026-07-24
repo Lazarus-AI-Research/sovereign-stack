@@ -10,11 +10,14 @@ Docker, or operating-system packages.
 
 ## One-command install
 
-Tagged releases also publish a notarized Apple Silicon `.pkg` and an Ubuntu
-AMD64 `.deb`. Opening either package installs a small native bootstrap and
-starts the same signed, version-pinned installation in the background; the
-portal opens as soon as the control plane is ready. Native packages are also
-Sigstore-signed and accompanied by SHA-256 files on the release page.
+Tagged releases publish an Apple Silicon `.pkg` and an Ubuntu AMD64 `.deb`.
+When Apple credentials are configured, the macOS package is Developer ID
+signed, notarized, and stapled. Otherwise its filename ends in `-unsigned.pkg`
+and macOS displays the expected Gatekeeper warnings. Opening either package
+installs a small native bootstrap and starts the same signed, version-pinned
+installation in the background; the portal opens as soon as the control plane
+is ready. Every native package has detached Sigstore and SHA-256 verification
+artifacts on the release page, including the explicitly unsigned macOS package.
 
 For the stable release:
 
@@ -25,8 +28,8 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 For a release candidate, pin both the bootstrap script and requested version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash
 ```
 
 The bootstrap downloads the versioned release archive, verifies its SHA-256

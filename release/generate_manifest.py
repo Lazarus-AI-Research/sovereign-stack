@@ -52,13 +52,16 @@ def main() -> None:
         raise ValueError("release source has an invalid runtime_commit")
 
     version = source["version"]
+    runtime_version = source.get("runtime_version", version)
+    if not re.fullmatch(r"0\.1\.0(?:-rc\.[0-9]+)?", runtime_version):
+        raise ValueError("release source has an invalid runtime_version")
     first_party = [
         ("sovereign-control", f"{REGISTRY}/sovereign-control:{version}", ["linux/amd64", "linux/arm64"]),
         ("sovereign-docker-proxy", f"{REGISTRY}/sovereign-docker-proxy:{version}", ["linux/amd64", "linux/arm64"]),
         ("sovereign-evals", f"{REGISTRY}/sovereign-evals:{version}", ["linux/amd64", "linux/arm64"]),
         ("sovereign-workspace", f"{REGISTRY}/sovereign-workspace:{version}", ["linux/amd64", "linux/arm64"]),
-        ("sovereign-runtime-cuda", f"{REGISTRY}/sovereign-runtime:cuda-x86_64-{version}", ["linux/amd64"]),
-        ("sovereign-runtime-metal", f"{REGISTRY}/sovereign-runtime:metal-arm64-{version}", ["linux/arm64"]),
+        ("sovereign-runtime-cuda", f"{REGISTRY}/sovereign-runtime:cuda-x86_64-{runtime_version}", ["linux/amd64"]),
+        ("sovereign-runtime-metal", f"{REGISTRY}/sovereign-runtime:metal-arm64-{runtime_version}", ["linux/arm64"]),
         ("sovereign-embeddings", f"{REGISTRY}/sovereign-embeddings:{version}", ["linux/amd64"]),
     ]
     images = [
@@ -95,6 +98,7 @@ def main() -> None:
         "schema_version": "1.0",
         "version": version,
         "stack_commit": args.stack_commit,
+        "runtime_version": runtime_version,
         "runtime_commit": source["runtime_commit"],
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "supported_profiles": source["supported_profiles"],

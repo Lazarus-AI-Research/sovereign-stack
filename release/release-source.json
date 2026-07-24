@@ -1,6 +1,7 @@
 {
   "schema_version": "1.0",
-  "version": "0.1.0-rc.4",
+  "version": "0.1.0-rc.5",
+  "runtime_version": "0.1.0-rc.4",
   "runtime_commit": "89762bd5ef7ea142e129ef7ab0c9d5a03adb63a5",
   "supported_profiles": ["cuda-x86_64", "metal-arm64"],
   "third_party_images": [

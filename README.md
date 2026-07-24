@@ -6,7 +6,7 @@ operator control plane, an OpenAI-compatible model gateway, local inference,
 vector search, evaluations, observability, and backups in one managed stack.
 
 The current public preview is
-[`v0.1.0-rc.4`](https://github.com/Lazarus-AI-Research/sovereign-stack/releases/tag/v0.1.0-rc.4).
+[`v0.1.0-rc.5`](https://github.com/Lazarus-AI-Research/sovereign-stack/releases/tag/v0.1.0-rc.5).
 It supports Apple Silicon Macs and Ubuntu NVIDIA CUDA hosts.
 Release-candidate users should pin both the installer URL and
 `SOVEREIGN_VERSION` exactly as shown below.
@@ -43,9 +43,12 @@ See [hardware profiles](docs/hardware-profiles.md) for the exact support matrix.
 
 ## Install
 
-Tagged releases provide a notarized Apple Silicon `.pkg` and an Ubuntu AMD64
-`.deb` for a native one-click install. The signed shell path below remains the
-supported choice for headless servers and automation.
+Tagged releases provide an Apple Silicon `.pkg` and an Ubuntu AMD64 `.deb` for
+a native one-click install. A filename ending in `-unsigned.pkg` means Apple
+credentials were not configured and macOS will display Gatekeeper warnings;
+the release page still provides its SHA-256 and Sigstore bundle. The signed
+shell path below remains the supported choice for headless servers and
+automation.
 
 Run the same command on a supported Mac or CUDA host. The installer detects the
 profile, verifies the signed release, generates appliance secrets, pulls the
@@ -54,8 +57,8 @@ continue loading. It opens the one-time first-administrator setup page in the
 default browser and completes runtime smoke tests in the background.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash
 ```
 
 The first run can take a while because it downloads a pinned signature verifier,
@@ -69,12 +72,12 @@ To choose a profile explicitly:
 
 ```bash
 # Apple Silicon
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --profile metal-arm64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --profile metal-arm64
 
 # Ubuntu NVIDIA CUDA
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --profile cuda-x86_64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --profile cuda-x86_64
 ```
 
 When installing over SSH, the installer selects private-LAN access and prints
@@ -83,16 +86,16 @@ also choose access explicitly:
 
 ```bash
 # Local desktop
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --access desktop
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --access desktop
 
 # Headless/private network
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --access lan
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --access lan
 
 # Public domain with automatic HTTPS
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --domain ai.example.com
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --domain ai.example.com
 ```
 
 The default install locations are:
@@ -394,7 +397,7 @@ credentials, models, databases, reports, backups, and Docker volumes are
 preserved.
 
 ```bash
-VERSION=0.1.0-rc.4
+VERSION=0.1.0-rc.5
 curl -fsSL "https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v${VERSION}/deploy/scripts/install.sh" \
   | SOVEREIGN_VERSION="$VERSION" bash
 ```
@@ -524,11 +527,11 @@ repository because it tracks upstream vLLM.
 
 ## Versioning and release integrity
 
-`VERSION` is the source version stamp. Release CI builds all first-party images
-from one Stack commit, signs them with Sigstore, resolves the paired Runtime
-release, and publishes a signed manifest containing exact image digests and
-source commits. The installer consumes those immutable references rather than
-mutable tags.
+`VERSION` is the source version stamp. Release CI builds all Stack images from
+one commit, signs them with Sigstore, resolves the separately versioned Runtime
+release, and publishes a signed manifest containing exact image digests,
+versions, and source commits. The installer consumes those immutable references
+rather than mutable tags.
 
 The two-repository publication order and clean-host release gates are defined
 in the [release runbook](docs/releasing.md).

@@ -4,6 +4,14 @@ All notable changes to Sovereign Stack are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-rc.5] - 2026-07-24
+
+- Added an explicitly named unsigned macOS package fallback when Apple
+  Developer ID and notarization credentials are not configured. Release CI
+  still publishes SHA-256 and Sigstore verification artifacts for the package.
+- Decoupled Stack and Runtime release versions so a Stack-only release can
+  reuse an already-qualified, immutable signed Runtime release.
+
 ## [0.1.0-rc.4] - 2026-07-24
 
 - Replaced the runtime-hosted embedding models with the pinned
