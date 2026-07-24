@@ -27,15 +27,16 @@ SovereignStack is that entire stack, assembled, hardened, and delivered as a sin
 
 We didn't reinvent the ecosystem — we integrated the best of it and made it behave like one product. Under the hood it's proven open source: a tuned fork of **vLLM** for inference, **AnythingLLM** for the workspace, **PostgreSQL + pgvector** for storage and retrieval, and **Prometheus, Grafana, Loki, and OpenTelemetry** for observability. On top sits the part that makes it an appliance rather than a pile of containers.
 
-The design follows one invariant: **one product, one control plane, one gateway, one runtime endpoint.** Requests flow in a straight line —
+The design follows one invariant: **one product, one control plane, and one gateway.** Requests flow through a small, explicit service graph —
 
 ```
-Workspace  →  Gateway  →  Runtime  →  your local accelerator
+Workspace  →  Gateway  →  generation runtime
+                    └→  embedding service
 ```
 
 — and each layer has exactly one job.
 
-- **Sovereign Runtime** is the clever core. Instead of running separate servers for chat and embeddings, it serves multiple *model roles* — generation and embeddings — from a single process on a single port, dividing GPU memory deliberately rather than by luck. One endpoint, many jobs.
+- **Sovereign Runtime** owns generation through the Lazarus vLLM fork. A separate, tiny **EmbeddingGemma** process owns text embeddings, so a crash or update there cannot reload the chat model. LiteLLM keeps this split invisible to clients behind one OpenAI-compatible product API.
 - **Sovereign Control** is a single Go binary with an embedded web UI. It detects your hardware, picks the right profile, downloads and pins models, manages gateway keys and budgets, runs evaluations, and handles backups — the whole operations surface behind one login.
 - **Sovereign Gateway** gives every model a stable name and enforces keys, budgets, and rate limits, so the workspace never talks to the runtime directly.
 - Everything runs on **Docker Compose** — no Kubernetes, no cluster, no SRE team required. It's built for a Mac Studio or a single GPU workstation in the corner of an office.
@@ -48,7 +49,7 @@ Here's the before-and-after.
 
 | Doing it yourself | With SovereignStack |
 | --- | --- |
-| Choose and configure an inference server, twice | Included — one runtime, both roles |
+| Choose and configure generation and embedding servers | Included — isolated services behind one gateway |
 | Stand up a gateway, workspace, vector DB, and RAG pipeline | Included and wired together |
 | Configure Postgres, auth, and five observability tools | Included, with dashboards |
 | Write and maintain the Compose orchestration | One command |

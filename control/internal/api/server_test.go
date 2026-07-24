@@ -9,6 +9,8 @@ import (
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/hardware"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
 )
 
@@ -84,6 +86,7 @@ func TestMetrics(t *testing.T) {
 		"sovereign_control_up 1",
 		"sovereign_control_runtime_up 1",
 		"sovereign_control_gateway_up 0",
+		"sovereign_control_embeddings_up 0",
 		"sovereign_control_docker_proxy_up 1",
 	} {
 		if !strings.Contains(rec.Body.String(), metric) {
@@ -136,5 +139,54 @@ func TestProfilesListsKnownProfiles(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if len(body.Profiles) != len(KnownProfiles) {
 		t.Errorf("profiles: got %d, want %d", len(body.Profiles), len(KnownProfiles))
+	}
+}
+
+func TestReadinessReportsIndependentComponents(t *testing.T) {
+	rec := get(testControl(t), BasePath+"/readiness")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("readiness: %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Overall    string                    `json:"overall"`
+		Components map[string]map[string]any `json:"components"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"portal", "authentication", "generation", "embeddings", "gateway", "workspace", "observability"} {
+		if body.Components[name]["state"] == nil {
+			t.Errorf("readiness component %q missing state: %v", name, body.Components)
+		}
+	}
+}
+
+func TestApplicationRegistryIsControlledAndRoleFiltered(t *testing.T) {
+	rec := get(testControl(t), BasePath+"/applications")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("applications: %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Applications []map[string]any `json:"applications"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Applications) != 1 || body.Applications[0]["id"] != "chat" {
+		t.Fatalf("unauthenticated test identity should receive member registry: %v", body.Applications)
+	}
+}
+
+func TestCatalogCompatibilityChecksCapacityBeforeDownload(t *testing.T) {
+	item, err := models.CatalogEntry("cuda-x86_64", "assistant-large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatible, reason := catalogCompatibility(item, hardware.Inventory{
+		Profile: "cuda-x86_64", MemoryBytes: 64 << 30, StorageFreeBytes: 1 << 30,
+		GPU: &hardware.GPU{Name: "NVIDIA", VRAMBytes: 24 << 30},
+	})
+	if compatible || !strings.Contains(reason, "disk space") {
+		t.Fatalf("low disk compatibility = %v, %q", compatible, reason)
 	}
 }

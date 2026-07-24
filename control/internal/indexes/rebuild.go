@@ -6,12 +6,14 @@ import (
 	"fmt"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	workspaceapi "github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 )
 
 type RebuildPayload struct {
 	TargetIndexID        string `json:"target_index_id"`
 	ActivateWhenComplete bool   `json:"activate_when_complete"`
+	KeepMaintenance      bool   `json:"keep_maintenance,omitempty"`
 }
 
 type RebuildDeps struct {
@@ -22,6 +24,8 @@ type RebuildDeps struct {
 }
 
 func (d RebuildDeps) Handle(ctx context.Context, payload json.RawMessage) (result any, returnErr error) {
+	total := int64(5)
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "preparing", Message: "Preparing workspace index", Current: 0, Total: &total, Unit: "steps"})
 	var request RebuildPayload
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, fmt.Errorf("bad rebuild payload: %w", err)
@@ -29,6 +33,15 @@ func (d RebuildDeps) Handle(ctx context.Context, payload json.RawMessage) (resul
 	target, err := d.Store.Get(ctx, request.TargetIndexID)
 	if err != nil {
 		return nil, err
+	}
+	if !request.KeepMaintenance {
+		state, err := d.Store.EmbeddingState(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("appliance embedding provider is not active: %w", err)
+		}
+		if target.ProfileID != state.ProfileID {
+			return nil, fmt.Errorf("profile %q is not the appliance-wide active embedding profile", target.ProfileID)
+		}
 	}
 	profile, err := d.Profiles.Get(target.ProfileID)
 	if err != nil {
@@ -56,6 +69,7 @@ func (d RebuildDeps) Handle(ctx context.Context, payload json.RawMessage) (resul
 	}()
 
 	activatePayload, _ := json.Marshal(embeddings.ActivatePayload{ProfileID: target.ProfileID})
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "loading_embeddings", Message: "Loading embedding provider", Current: 1, Total: &total, Unit: "steps"})
 	activation, err := d.Activator.HandleActivate(ctx, activatePayload)
 	if err != nil {
 		return nil, fmt.Errorf("load target embedding profile: %w", err)
@@ -71,9 +85,11 @@ func (d RebuildDeps) Handle(ctx context.Context, payload json.RawMessage) (resul
 		return nil, err
 	}
 
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "building", Message: "Embedding workspace documents", Current: 2, Total: &total, Unit: "steps"})
 	rebuilt, err := d.Workspace.RebuildIndex(ctx, workspaceapi.RebuildRequest{
 		WorkspaceSlug: target.ProviderSlug, IndexVersion: target.ID,
-		QueryPrefix: profile.QueryPrefix, DocumentPrefix: profile.DocumentPrefix,
+		ServedModelName: profile.ServedModelName,
+		QueryPrefix:     profile.QueryPrefix, DocumentPrefix: profile.DocumentPrefix,
 		PreprocessingVer: profile.PreprocessingVersion,
 	})
 	if err != nil {
@@ -87,12 +103,13 @@ func (d RebuildDeps) Handle(ctx context.Context, payload json.RawMessage) (resul
 		return nil, fmt.Errorf("rebuild incomplete: processed %d/%d documents; failures=%v",
 			rebuilt.ProcessedDocuments, rebuilt.DocumentCount, rebuilt.Failures)
 	}
-	if rebuilt.VectorCount < 1 {
+	if rebuilt.VectorCount < 1 && rebuilt.DocumentCount > 0 {
 		return nil, fmt.Errorf("rebuilt index contains no vectors")
 	}
 	if err := d.Store.SetStatus(ctx, target.ID, "validating"); err != nil {
 		return nil, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "validating", Message: "Validating rebuilt vectors", Current: 4, Total: &total, Unit: "steps"})
 	actual, err := d.Store.CountVectors(ctx, target.ID, target.ProviderSlug)
 	if err != nil || actual != rebuilt.VectorCount {
 		return nil, fmt.Errorf("vector validation failed: workspace=%d database=%d: %w",
@@ -103,10 +120,14 @@ func (d RebuildDeps) Handle(ctx context.Context, payload json.RawMessage) (resul
 		if err != nil {
 			return nil, err
 		}
+		_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Workspace index is active", Current: 5, Total: &total, Unit: "steps"})
 		return map[string]any{"index": active, "rebuild": rebuilt}, nil
 	}
-	if err := d.Store.SetMaintenance(ctx, target.WorkspaceID, false, ""); err != nil {
-		return nil, err
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Workspace index validated", Current: 5, Total: &total, Unit: "steps"})
+	if !request.KeepMaintenance {
+		if err := d.Store.SetMaintenance(ctx, target.WorkspaceID, false, ""); err != nil {
+			return nil, err
+		}
 	}
 	return map[string]any{"index_id": target.ID, "status": "validating", "rebuild": rebuilt}, nil
 }

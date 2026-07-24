@@ -19,7 +19,17 @@
         "response_logging": { "type": "boolean", "default": false }
       }
     },
-    "prompt_logging": { "$ref": "#/$defs/enabled" }
+    "prompt_logging": { "$ref": "#/$defs/enabled" },
+    "experience": {
+      "type": "object",
+      "required": ["portal_navigation", "managed_downloads", "host_lifecycle"],
+      "additionalProperties": false,
+      "properties": {
+        "portal_navigation": { "type": "boolean" },
+        "managed_downloads": { "type": "boolean" },
+        "host_lifecycle": { "type": "boolean" }
+      }
+    }
   },
   "$defs": {
     "enabled": {

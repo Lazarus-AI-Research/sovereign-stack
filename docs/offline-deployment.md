@@ -19,7 +19,7 @@ To limit weight size, repeat `--include-model` with one or more supported IDs:
 ```bash
 sovereign bundle create \
   --include-model assistant-large \
-  --include-model embedding-omni-default \
+  --include-model embedding-gemma-default \
   --output ~/sovereign-cuda.tar.gz
 ```
 

@@ -39,7 +39,7 @@ initializing → downloading → compiling → loading → smoke_testing
 - `runtime_error`: a run-time fatal condition (engine death, accelerator
   reset). Whether the process exits (letting Docker restart it) or stays up
   for diagnosis is governed by `fail_process_on_generation_error` /
-  `fail_process_on_embedding_error` (§12).
+  `fail_process_on_embedding_error` (§12) for runtimes that enable that role.
 
 ## Endpoints
 
@@ -56,7 +56,7 @@ network only, §22).
 | `GET /runtime/errors` | `{"errors": [{code, role?, message, recoverable, first_seen}]}` — non-empty whenever state is `configuration_error`/`runtime_error`/`degraded`. |
 | `POST /v1/chat/completions` | Generation role, OpenAI-compatible incl. `stream: true` (SSE terminated by `data: [DONE]`). |
 | `POST /v1/completions` | Generation role. |
-| `POST /v1/embeddings` | Embedding role. Extended schema below. |
+| `POST /v1/embeddings` | Optional runtime embedding role. Disabled in the shipped SovereignStack profiles; LiteLLM routes product embeddings to `embeddinggemma.c`. |
 | `GET /v1/models` | Aggregated list across all loaded roles; `id` = `served_model_name`. |
 | `GET /metrics` | Prometheus text format, labels per §21. |
 
@@ -84,34 +84,14 @@ them. Initial taxonomy (extend here, never ad hoc):
 | `SMOKE_TEST_FAILED` | startup self-test failed | yes |
 | `HOST_AGENT_UNREACHABLE` | Metal host inference agent not reachable/compatible | yes |
 
-## Extended `/v1/embeddings` (Sovereign superset of OpenAI)
+## Product embedding service
 
-Text (standard OpenAI): `{"model": ..., "input": "..." | ["...", ...]}`.
-
-Multimodal (LCO-Omni profiles): a `messages` array in OpenAI chat format
-carries the content parts; exactly one embedding is returned per request item.
-
-```json
-{
-  "model": "embedding-omni-default",
-  "messages": [
-    { "role": "user", "content": [
-      { "type": "image_url", "image_url": { "url": "data:image/png;base64,..." } },
-      { "type": "text", "text": "optional accompanying text" }
-    ]}
-  ]
-}
-```
-
-Audio uses `{"type": "input_audio", "input_audio": {"data": "<base64>", "format": "wav"}}`.
-
-Rules:
-- **Data URIs / base64 only. Remote URLs are rejected** — the runtime never
-  performs egress fetches (sovereignty).
-- Response shape is standard OpenAI (`data[i].embedding`), values L2-normalized
-  when the profile says `normalization: l2`.
-- The gateway must pass these fields through; the LiteLLM route for this is a
-  permanent smoke-suite check (drop_params risk, §15).
+The shipped stack routes `POST /v1/embeddings` through LiteLLM to
+`embeddinggemma.c`. Its additive OpenAI endpoint accepts a string or string
+array, supports 768/512/256/128 Matryoshka dimensions and float/base64 output,
+and returns the standard indexed data and usage envelope. Its original
+`POST /api/embed` endpoint remains available on the private service for native
+clients.
 
 ## Image contract (§24)
 
@@ -120,7 +100,7 @@ and `/usr/local/bin/sovereign-runtime-healthcheck` (`--live` probes
 `/health/live` only), reads `$SOVEREIGN_RUNTIME_CONFIG`, writes
 `$SOVEREIGN_RUNTIME_MANIFEST`, and follows the §24 startup sequence: config →
 control API up → initializing → detect accelerator → resolve revisions →
-download/verify → compile → load generation → load embedding → serve :8000 →
+download/verify → compile → load enabled runtime roles → serve :8000 →
 manifest → startup smoke test (§20) → terminal state → logs + metrics.
 
 Honesty requirements:

@@ -8,3 +8,37 @@ services:
       SOVEREIGN_PROFILE: cuda-x86_64
       VLLM_BACKEND: cuda
       NVIDIA_VISIBLE_DEVICES: all
+
+  # Embeddings have an independent failure and release boundary. The model is
+  # mounted read-only and the service is reachable only on the private network.
+  sovereign-embeddings:
+    image: ${SOVEREIGN_EMBEDDINGS_IMAGE}
+    container_name: sovereign-embeddings
+    restart: unless-stopped
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ./models/embeddinggemma:/models:ro
+    expose:
+      - "42666"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/42666 &&
+          printf 'GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    networks:
+      - sovereign
+
+  sovereign-gateway:
+    depends_on:
+      sovereign-runtime:
+        condition: service_healthy
+      sovereign-embeddings:
+        condition: service_healthy

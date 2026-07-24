@@ -10,6 +10,12 @@ Docker, or operating-system packages.
 
 ## One-command install
 
+Tagged releases also publish a notarized Apple Silicon `.pkg` and an Ubuntu
+AMD64 `.deb`. Opening either package installs a small native bootstrap and
+starts the same signed, version-pinned installation in the background; the
+portal opens as soon as the control plane is ready. Native packages are also
+Sigstore-signed and accompanied by SHA-256 files on the release page.
+
 For the stable release:
 
 ```bash
@@ -25,26 +31,36 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 
 The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
-owner-only credentials, pulls digest-pinned images from the signed release
-manifest, starts the stack, waits for both
-runtime roles, and runs the smoke suite. A Hugging Face token is only needed
+owner-only appliance secrets, pulls digest-pinned images from the signed
+release manifest, starts the portal, opens guided first-run setup, then
+provisions the generation runtime and embedding service while **Activity**
+reports progress. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.
 
 The appliance is installed under `~/.sovereign`; the management command is
 placed at `~/.local/bin/sovereign`. Add that directory to `PATH` if needed.
-The default URLs are:
+The installer opens the correct portal URL automatically on a desktop. Over
+SSH it defaults to a detected private-LAN address and prints that address (and
+a QR code when available), so `127.0.0.1` is never presented as the primary
+remote result. The first user chooses the administrator username and password
+through a single-use, 30-minute setup link; `sovereign admin setup-link`
+remains a recovery path for an expired link.
 
-- Workspace: `http://127.0.0.1:8880/`
-- Control: `http://127.0.0.1:8880/control/`
+Network access is normally changed inside **Network Access** in the portal.
+The compatible recovery commands remain:
 
-The generated administrator password is in `~/.sovereign/credentials` with
-mode `0600`.
+```bash
+sovereign access lan                       # trusted RFC1918 network
+sovereign access domain ai.example.com     # public hostname, automatic TLS
+sovereign url                              # print the current address
+```
 
 ## Common operations
 
 ```bash
 sovereign status
+sovereign open
 sovereign logs -f sovereign-runtime
 sovereign smoke
 sovereign down
@@ -53,7 +69,9 @@ sovereign up
 
 Re-running the same installer is idempotent: it replaces release code while
 preserving configuration, encrypted credentials, models, databases, reports,
-and backups.
+and backups. The EmbeddingGemma upgrade removes only the retired local
+embedding entries, preserves unrelated generation and remote model entries,
+and stores one-time `*.pre-embeddinggemma` configuration backups.
 
 The appliance is intentionally single-instance. Startup refuses to take over
 fixed SovereignStack containers owned by a different install directory; stop

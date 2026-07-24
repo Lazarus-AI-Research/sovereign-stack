@@ -2,7 +2,7 @@
 
 ## Implementation and Design Specification
 
-**Version:** 0.6
+**Version:** 0.7
 **Company:** Lazarus AI Research
 **Product:** Sovereign Stack
 **Status:** Draft — Core architecture locked
@@ -12,7 +12,7 @@
 **Image registry:** GitHub Container Registry (GHCR)
 **Control plane implementation:** Go
 **Primary inference runtime:** Lazarus fork of vLLM
-**Default omni embedding model:** `LCO-Embedding/LCO-Embedding-Omni-3B-2605`
+**Embedding backend:** `embeddinggemma.c` with `ggml-org/embeddinggemma-300M-qat-q4_0-GGUF`
 
 ---
 
@@ -24,7 +24,7 @@ It provides a complete private AI environment including:
 
 * Branded chat and document workspace
 * Local text generation
-* Local multimodal embeddings
+* Local text embeddings
 * Document ingestion and retrieval
 * Image, audio, and text understanding
 * Remote and cloud model access
@@ -74,9 +74,9 @@ The core invariant is:
 One product.
 One control plane.
 One gateway.
-One runtime endpoint.
-One vLLM process.
-Multiple model roles.
+One product endpoint.
+One vLLM generation process.
+One isolated embedding service.
 One Lazarus vLLM fork.
 Multiple platform-specific Docker images.
 ```
@@ -225,7 +225,8 @@ An offline bundle is a distribution artifact, not a backup.
 
 Mac deployments require Docker Desktop.
 
-The Mac runtime is distributed and operated through Docker using the same product-level workflow as other runtime profiles.
+The Mac generation runtime is distributed and operated through Docker. Native
+inference processes that require Metal are installed and managed on the host.
 
 Runtime image:
 
@@ -233,12 +234,15 @@ Runtime image:
 ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-<version>
 ```
 
-Platform-specific Docker Desktop or host-integration behavior may exist internally, but must remain encapsulated behind the Sovereign Runtime container and contract.
+The signed generation agent and `embeddinggemma` are separate launchd jobs.
+Both bind host loopback; Docker Desktop reaches them through
+`host.docker.internal`.
 
-Sovereign Gateway and Sovereign Control must continue to use:
+Sovereign Gateway and Sovereign Control use:
 
 ```text
 http://sovereign-runtime:8000
+http://host.docker.internal:42666
 ```
 
 Mac-specific implementation details must not leak into the rest of the product.
@@ -251,9 +255,7 @@ Lazarus AI Research will maintain a complete fork of vLLM.
 
 The fork includes:
 
-* Single-process multi-role serving
 * Generation models
-* Embedding models
 * CUDA support
 * ROCm support
 * Strix Halo support
@@ -425,31 +427,24 @@ This prevents:
 
 ## 3.4 Honest failure-isolation semantics
 
-Sovereign Runtime uses one process for generation and embeddings.
+Sovereign Runtime owns generation. Embeddings run in a separate process with
+an independent health and restart boundary.
 
-Role-level degradation is supported only while the underlying process and accelerator remain operational.
-
-The runtime may report:
+Sovereign Control reports the two service states independently. For example:
 
 ```json
 {
   "status": "degraded",
-  "roles": {
-    "generation": {
-      "status": "healthy"
-    },
-    "embedding": {
-      "status": "unhealthy"
-    }
-  }
+  "runtime": {"reachable": true, "ready": true},
+  "embeddings": {"reachable": false, "backend": "embeddinggemma"}
 }
 ```
 
-However, the following failures may affect all roles:
+The following shared-host failures may still affect both services:
 
-* Process crash
-* Kernel segmentation fault
+* Host failure
 * Accelerator reset
+* Out-of-memory pressure on the shared device
 * CUDA, ROCm, XPU, Gaudi, or Metal fatal error
 * Process-level out-of-memory condition
 * Communication-library hang
@@ -598,10 +593,6 @@ Responsibilities:
 * Chat completions
 * Text completions
 * Generation
-* Text embeddings
-* Image embeddings
-* Audio embeddings
-* Optional video embeddings
 * Runtime health
 * Prometheus metrics
 * Model lifecycle
@@ -613,18 +604,15 @@ Responsibilities:
 Locked topology:
 
 ```text
-One container
+One generation container
 One vLLM process
-One port
-One OpenAI-compatible API
-Multiple model roles
+One runtime port
 ```
 
-Required roles:
+Required runtime role:
 
 ```text
 generation
-embedding
 ```
 
 Optional roles:
@@ -723,7 +711,7 @@ Responsibilities:
 * Embedding benchmarks
 * Mixed-role benchmarks
 * Retrieval evaluations
-* Multimodal embedding evaluations
+* Text embedding and retrieval evaluations
 * Historical comparison
 * JSON and HTML reports
 
@@ -776,11 +764,15 @@ The proxy is internal-only and has no user interface.
 │                                                        │
 │ /v1/chat/completions → generation role                 │
 │ /v1/completions      → generation role                 │
-│ /v1/embeddings       → omni embedding role             │
 └───────┬──────────────────────────────────────────────────┘
         │
 ┌───────▼────────────────────────────────────────────────────┐
 │ CUDA / ROCm / XPU / Gaudi / Metal / DGX Spark / Strix Halo │
+└────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────┐
+│ embeddinggemma :42666                                      │
+│ /v1/embeddings → EmbeddingGemma text vectors               │
 └────────────────────────────────────────────────────────────┘
 
 Persistent services:
@@ -948,18 +940,8 @@ sovereign-vllm/
       selftest.py
       benchmark.py
 
-    multi_role/
-      registry.py
-      router.py
-      scheduler.py
-      memory_policy.py
-      lifecycle.py
-      metrics.py
-
     models/
       generation/
-      embedding/
-        lco_omni/
       vision/
       audio/
       rerank/
@@ -1032,7 +1014,7 @@ sovereign-evals/
     quick.yaml
     full.yaml
     retrieval.yaml
-    omni-embedding.yaml
+    embedding.yaml
     mixed-role.yaml
 ```
 
@@ -1434,11 +1416,12 @@ services:
 
 ---
 
-# 9. Single-Process Multi-Role Runtime
+# 9. Isolated Inference Services
 
 ## 9.1 Core requirement
 
-Sovereign Runtime loads and serves generation and embedding models inside one vLLM process.
+Sovereign Runtime loads and serves generation models inside one vLLM process.
+`embeddinggemma` serves the fixed embedding model in a separate process.
 
 The process exposes one listener:
 
@@ -1451,21 +1434,21 @@ Required endpoints:
 ```text
 POST /v1/chat/completions
 POST /v1/completions
-POST /v1/embeddings
 GET  /v1/models
 ```
 
-No separate generation or embedding port is exposed.
+Port 8000 stays private to the Compose network. The embedding service listens
+on private port 42666 on CUDA and host loopback port 42666 on Metal. Caddy does
+not publish either service.
 
 ---
 
 ## 9.2 Runtime roles
 
-Required:
+Required in Sovereign Runtime:
 
 ```text
 generation
-embedding
 ```
 
 Optional:
@@ -1476,7 +1459,7 @@ audio
 rerank
 ```
 
-The embedding role may support multiple modalities through one model.
+The runtime embedding role is disabled in shipped profiles.
 
 ---
 
@@ -1490,71 +1473,41 @@ The embedding role may support multiple modalities through one model.
   → generation-capable model
 
 /v1/embeddings
-  → embedding-capable model
+  → LiteLLM → embeddinggemma
 
 /v1/models
-  → aggregated loaded-role model list
+  → LiteLLM aggregates generation and embedding aliases
 ```
 
 The request `model` field determines the specific configured model alias.
 
 ---
 
-## 9.4 Shared scheduling
+## 9.4 Independent scheduling and failure boundaries
 
-The runtime scheduler must support:
-
-* Per-role priority
-* Per-role concurrency
-* Per-role batching
-* Backpressure
-* Role-aware metrics
-* Mixed generation/embedding workloads
-* Best-effort resource weighting
-* Embedding throttling during chat pressure
-
-Example:
-
-```yaml
-resource_policy:
-  enforcement: best_effort
-
-  generation:
-    priority: high
-    memory_weight: 82
-    max_concurrent_requests: 8
-
-  embedding:
-    priority: low
-    memory_weight: 18
-    max_concurrent_requests: 4
-    throttle_when_generation_queue_above: 2
-```
+Generation and embedding requests may run concurrently, but each service owns
+its queue, batching, caches, health, and restart policy. Failure of the
+embedding process must not reload the generation model.
 
 ---
 
-# 10. Default Embedding Model
+# 10. Embedding Service
 
-## 10.1 Preferred omni model
+## 10.1 Certified model
 
-The preferred Sovereign Stack multimodal embedding model is:
+The certified Sovereign Stack text embedding model is:
 
 ```text
-LCO-Embedding/LCO-Embedding-Omni-3B-2605
+ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
 ```
 
 Product alias:
 
 ```text
-embedding-omni-default
+embedding-gemma-default
 ```
 
-Intended modalities:
-
-* Text
-* Images
-* Audio
-* Video when platform support is validated
+Supported modality: text.
 
 The model must be pinned to an immutable revision in production.
 
@@ -1562,18 +1515,16 @@ Example:
 
 ```yaml
 embedding_profiles:
-  omni-default:
-    provider: sovereign-runtime
-    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
-    revision: "<immutable-commit>"
-    served_model_name: embedding-omni-default
-    pooling: last
+  gemma-default:
+    provider: embeddinggemma
+    model: ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
+    revision: 8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73
+    served_model_name: embedding-gemma-default
+    pooling: mean
     normalization: l2
-    modalities:
-      - text
-      - image
-      - audio
-      - video
+    query_prefix: "task: search result | query: "
+    document_prefix: "title: none | text: "
+    modalities: [text]
 ```
 
 The output dimension must be discovered and validated from the loaded checkpoint.
@@ -1582,52 +1533,30 @@ It must not be inferred from the model name or hard-coded without validation.
 
 ---
 
-## 10.2 Compact fallback
+## 10.2 API compatibility
 
-Sovereign Stack must retain a smaller text-only embedding profile for:
-
-* Memory-constrained systems
-* Unsupported multimodal platforms
-* Initial platform bring-up
-* Diagnostic fallback
-* Customer preference
-
-Example:
-
-```yaml
-embedding_profiles:
-  text-compact:
-    provider: sovereign-runtime
-    model: "<validated-text-embedding-model>"
-    revision: "<immutable-commit>"
-    served_model_name: embedding-text-compact
-    modalities:
-      - text
-```
-
-The exact fallback model remains configurable.
+`embeddinggemma` retains its native `POST /api/embed` contract and adds
+`POST /v1/embeddings` for LiteLLM and OpenAI clients. The OpenAI route supports
+768/512/256/128 dimensions and float/base64 encoding without changing the
+native response envelope.
 
 ---
 
 ## 10.3 Platform conformance
 
-`embedding-omni-default` is enabled on a platform only after that runtime passes:
+`embedding-gemma-default` is enabled on a platform only after it passes:
 
 * Model load
 * Text embedding
-* Image embedding
-* Audio embedding
 * Output normalization
 * Dimension validation
 * Batch embedding
-* Mixed generation/embedding workload
+* Concurrent generation/embedding workload
 * pgvector insert and retrieval
 * Restart and reload
 * Metrics validation
 
-A platform may ship initially with `text-compact` while omni support is still being completed.
-
-This is a platform capability issue, not a product architecture change.
+CUDA and Metal use the same GGUF and embedding identity.
 
 ---
 
@@ -1651,13 +1580,13 @@ Example:
 
 ```json
 {
-  "profile_id": "omni-default",
-  "model": "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
-  "revision": "immutable-commit",
-  "dimensions": 2048,
+  "profile_id": "gemma-default",
+  "model": "ggml-org/embeddinggemma-300M-qat-q4_0-GGUF",
+  "revision": "8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73",
+  "dimensions": 768,
   "normalization": "l2",
   "distance": "cosine",
-  "preprocessing_version": "sovereign-embed-v1"
+  "preprocessing_version": "sovereign-embeddinggemma-v1"
 }
 ```
 
@@ -1746,18 +1675,8 @@ roles:
     max_concurrent_requests: 8
 
   embedding:
-    enabled: true
+    enabled: false
     task: embed
-    source: huggingface
-    model: LCO-Embedding/LCO-Embedding-Omni-3B-2605
-    revision: "<immutable-revision>"
-    served_model_name: embedding-omni-default
-    priority: low
-    memory_weight: 18
-    max_concurrent_requests: 4
-    throttle_when_generation_queue_above: 2
-    pooling: last
-    normalization: l2
 
 observability:
   prometheus: true
@@ -1832,14 +1751,8 @@ Example healthy response:
       "served_model_name": "assistant-large"
     },
     "embedding": {
-      "status": "healthy",
-      "model_loaded": true,
-      "served_model_name": "embedding-omni-default",
-      "modalities": [
-        "text",
-        "image",
-        "audio"
-      ]
+      "status": "disabled",
+      "model_loaded": false
     }
   }
 }
@@ -1920,20 +1833,9 @@ Example:
     },
 
     "embedding": {
-      "enabled": true,
-      "status": "healthy",
-      "task": "embed",
-      "served_model_name": "embedding-omni-default",
-      "engine_model": "LCO-Embedding/LCO-Embedding-Omni-3B-2605",
-      "revision": "immutable-revision",
-      "dimensions": 2048,
-      "pooling": "last",
-      "normalization": "l2",
-      "modalities": [
-        "text",
-        "image",
-        "audio"
-      ]
+      "enabled": false,
+      "status": "disabled",
+      "task": "embed"
     }
   },
 
@@ -1964,7 +1866,8 @@ The example dimension is illustrative.
 
 # 15. LiteLLM Configuration
 
-Generation and embeddings use the same Sovereign Runtime base URL.
+LiteLLM presents one product API while generation and embeddings use separate
+internal base URLs.
 
 ```yaml
 model_list:
@@ -1974,11 +1877,11 @@ model_list:
       api_base: http://sovereign-runtime:8000/v1
       api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
 
-  - model_name: embedding-omni-default
+  - model_name: embedding-gemma-default
     litellm_params:
-      model: openai/embedding-omni-default
-      api_base: http://sovereign-runtime:8000/v1
-      api_key: os.environ/SOVEREIGN_RUNTIME_API_KEY
+      model: openai/embedding-gemma-default
+      api_base: os.environ/SOVEREIGN_EMBEDDINGS_BASE_URL
+      api_key: not-required
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -2112,17 +2015,17 @@ POST /runtime/smoke-test
 POST /runtime/benchmark
 ```
 
-## 18.4 Runtime roles
+## 18.4 Generation runtime role
 
 ```text
 GET   /runtime/roles
 PATCH /runtime/roles/generation
-PATCH /runtime/roles/embedding
 POST  /runtime/roles/generation/load
-POST  /runtime/roles/embedding/load
 POST  /runtime/roles/generation/unload
-POST  /runtime/roles/embedding/unload
 ```
+
+The fixed local embedding service is managed through embedding profiles and
+service health, not through runtime-role mutation.
 
 ## 18.5 Models
 
@@ -2164,7 +2067,7 @@ Rebuild request:
 
 ```json
 {
-  "embedding_profile": "omni-default",
+  "embedding_profile": "gemma-default",
   "source_index": "workspace-default-v1",
   "activate_when_complete": true
 }
@@ -2254,12 +2157,10 @@ Required checks:
 * Runtime liveness
 * Runtime readiness
 * Generation role loaded
-* Embedding role loaded
+* Embedding service healthy
 * Chat completion
 * Streaming completion
 * Text embedding
-* Image embedding where enabled
-* Audio embedding where enabled
 * LiteLLM generation route
 * LiteLLM embedding route
 * pgvector insertion
@@ -2277,7 +2178,7 @@ Required checks:
 * p50 latency
 * p95 latency
 * Basic concurrency
-* Mixed generation and embedding request
+* Concurrent generation and embedding requests
 
 ---
 
@@ -2288,8 +2189,6 @@ Required checks:
 * Multiple concurrency levels
 * Long context
 * Embedding batch scaling
-* Image embedding
-* Audio embedding
 * Mixed generation/embedding pressure
 * Memory behavior
 * Scheduler fairness
@@ -2297,22 +2196,16 @@ Required checks:
 
 ---
 
-## 19.4 Omni embedding evaluation
+## 19.4 Embedding evaluation
 
 Required metrics:
 
 * Text-text retrieval
-* Text-image retrieval
-* Image-text retrieval
-* Text-audio retrieval
-* Audio-text retrieval
-* Cross-modal ranking
+* Query-document retrieval
 * Batch throughput
 * Embedding consistency
 * Normalization validation
 * Dimension validation
-
-Video evaluation may be added where supported.
 
 ---
 
@@ -2327,8 +2220,6 @@ generation:
 
 embedding:
   text_batches: 100
-  image_items: 50
-  audio_items: 20
   batch_size: 16
 
 duration_seconds: 300
@@ -2350,7 +2241,7 @@ Report:
 
 # 20. Startup Smoke Test
 
-A smoke test runs after every successful runtime role load and runtime restart.
+A smoke test runs after successful generation and embedding service startup.
 
 The smoke test is not the Docker liveness check.
 
@@ -2360,19 +2251,12 @@ Required checks:
 Runtime process alive
 Runtime manifest valid
 Generation role reachable
-Embedding role reachable
+Embedding service reachable
 Chat completion succeeds
 Text embedding succeeds
 LiteLLM routes succeed
 pgvector reachable
 Metrics reachable
-```
-
-Where enabled:
-
-```text
-Image embedding succeeds
-Audio embedding succeeds
 ```
 
 Dashboard states:
@@ -2457,6 +2341,7 @@ Internal-only:
 
 * Sovereign Gateway
 * Sovereign Runtime
+* Sovereign Embeddings
 * PostgreSQL
 * Prometheus
 * Loki
@@ -2531,7 +2416,7 @@ Example:
 sovereign bundle create \
   --profile cuda-x86_64 \
   --include-model assistant-large \
-  --include-model embedding-omni-default \
+  --include-model embedding-gemma-default \
   --output sovereign-office-cuda.tar
 ```
 
@@ -2539,7 +2424,7 @@ sovereign bundle create \
 
 # 24. Runtime Image Contract
 
-Every runtime image contains:
+Every generation runtime image contains:
 
 ```text
 /usr/local/bin/run-sovereign-runtime
@@ -2557,15 +2442,16 @@ Required runtime behavior:
 6. Download or verify models.
 7. Compile platform components where required.
 8. Load generation role.
-9. Load embedding role.
-10. Start one vLLM process on port 8000.
-11. Generate runtime manifest.
-12. Run startup smoke test.
-13. Enter healthy, degraded, or configuration_error state.
-14. Export structured logs and Prometheus metrics.
+9. Start one vLLM process on port 8000.
+10. Generate runtime manifest.
+11. Run the generation-runtime smoke test.
+12. Enter healthy, degraded, or configuration_error state.
+13. Export structured logs and Prometheus metrics.
 ```
 
-The control API must remain available during recoverable configuration errors.
+The runtime control API must remain available during recoverable configuration
+errors. Stack orchestration starts and verifies the independent embedding
+service before the product smoke suite runs.
 
 ---
 
@@ -2579,25 +2465,21 @@ Every runtime image must pass:
 * Chat completions
 * Text completions
 * Streaming
-* Embeddings
 * Authentication
 * Invalid request handling
 
-## Multi-role correctness
+## Cross-service correctness
 
-* Generation and embedding loaded together
-* One process
-* One port
+* Generation and embedding healthy together
+* Independent process and restart boundaries
+* Separate private ports
 * Concurrent generation and embedding
-* Role-aware routing
-* Aggregated model listing
+* Gateway routing and aggregated model listing
 * Honest degraded-state reporting
 
 ## Embedding correctness
 
 * Text embeddings
-* Image embeddings where supported
-* Audio embeddings where supported
 * Dimension validation
 * Normalization validation
 * Batch behavior
@@ -2616,7 +2498,7 @@ Every runtime image must pass:
 ## Failure behavior
 
 * Generation load failure
-* Embedding load failure
+* Embedding service failure
 * Model revision failure
 * Accelerator unavailable
 * OOM
@@ -2643,6 +2525,7 @@ Required services:
 * AnythingLLM
 * LiteLLM
 * Sovereign Runtime
+* Sovereign Embeddings
 * PostgreSQL with pgvector
 * Phoenix
 * Prometheus
@@ -2662,25 +2545,22 @@ Required runtime capabilities:
 * One vLLM process
 * One runtime port
 * Generation role
-* Embedding role
 * Chat completions
 * Text completions
-* Text embeddings
 * Runtime manifest
 * Runtime state machine
 * Liveness and readiness separation
 * Startup smoke test
 * Runtime metrics
 
-Preferred embedding capability:
+Required embedding capability:
 
 ```text
-LCO-Embedding/LCO-Embedding-Omni-3B-2605
+embeddinggemma.c v0.3.1 with ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
 ```
 
-The omni profile is enabled per platform only after conformance.
-
-A compact text-only embedding fallback must remain available.
+The embedding service must pass direct, gateway, retrieval, and restart
+isolation conformance on each certified profile.
 
 Required product capabilities:
 
@@ -2711,7 +2591,6 @@ Required product capabilities:
 * Intel XPU
 * DGX Spark
 * LibreChat workspace provider
-* Full multimodal embedding support on all platforms
 * Video retrieval workflows
 * Dedicated reranking role
 * External vector providers
@@ -2725,19 +2604,20 @@ Required product capabilities:
 # 28. Final Architectural Rules
 
 ```text
-1. Sovereign Runtime uses one vLLM process for generation and embeddings.
+1. Sovereign Runtime uses one vLLM process for generation.
 
 2. Sovereign Runtime exposes one port and one OpenAI-compatible base URL.
 
-3. Generation and embedding models are separate roles inside that process.
+3. embeddinggemma runs as an independent service: a sibling container on CUDA
+   and a loopback-only launchd process on Metal.
 
-4. LCO-Embedding/LCO-Embedding-Omni-3B-2605 is the preferred omni embedding model.
+4. ggml-org/embeddinggemma-300M-qat-q4_0-GGUF is the certified embedding model.
 
-5. A smaller text-only embedding fallback remains available.
+5. The native /api/embed contract remains available; /v1/embeddings is additive.
 
 6. Embedding-model changes require versioned index rebuilds.
 
-7. Sovereign Gateway routes generation and embeddings to the same runtime endpoint.
+7. Sovereign Gateway routes generation and embeddings to their owning services.
 
 8. AnythingLLM never talks directly to Sovereign Runtime.
 
@@ -2759,17 +2639,19 @@ Required product capabilities:
 
 17. Recoverable configuration errors must not cause crash loops.
 
-18. Role-level degradation does not imply process-level fault isolation.
+18. Generation and embedding have independent process-level fault isolation.
 
 19. Memory allocation policies are best-effort and platform-dependent.
 
 20. Sovereign Control does not receive unrestricted Docker socket access.
 
-21. Every runtime image must pass the same multi-role conformance suite.
+21. Every runtime image must pass generation conformance; every embedding
+    deployment must pass embedding service conformance.
 
-22. Every embedding profile must pass modality and pgvector conformance.
+22. Every embedding profile must pass text retrieval and pgvector conformance.
 
-23. Platform-specific complexity remains inside the Lazarus vLLM fork and runtime image.
+23. Platform-specific complexity remains inside the owning generation or
+    embedding service.
 
 24. Docker Compose is the appliance deployment unit.
 

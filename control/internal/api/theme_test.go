@@ -44,6 +44,18 @@ func TestThemeIsPublicButBrandingIsGated(t *testing.T) {
 	}
 }
 
+func TestOnboardingPathsExposeOnlySingleUseTokens(t *testing.T) {
+	if !openPath(BasePath + "/auth/claim/example") || !openPath(BasePath+"/auth/invitations/example") {
+		t.Error("claim and invitation consumption must be reachable before login")
+	}
+	if openPath(BasePath + "/auth/setup-claim") {
+		t.Error("setup-claim issuance must require the owner operator token")
+	}
+	if !adminOnlyPath(BasePath + "/auth/setup-claim") {
+		t.Error("setup-claim issuance must remain administrator-only")
+	}
+}
+
 func TestThemeServedWithoutSession(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "branding.yaml")

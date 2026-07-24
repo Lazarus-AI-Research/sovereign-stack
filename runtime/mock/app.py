@@ -86,7 +86,7 @@ class MockRuntime:
 
     @property
     def embedding_alias(self) -> str:
-        return self._role_cfg("embedding").get("served_model_name", "embedding-text-compact")
+        return self._role_cfg("embedding").get("served_model_name", "embedding-gemma-default")
 
     # ── state machine ────────────────────────────────────────────────────
 

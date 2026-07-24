@@ -1,6 +1,6 @@
-// Package models manages the model registry (design.md §2.9, §18.5) and the
-// load workflow: rewrite the runtime config, restart the runtime through the
-// restricted proxy, wait for readiness.
+// Package models manages the model registry (design.md §2.9, §18.5) and local
+// runtime loading. EmbeddingGemma is the default service; embedding registry
+// entries become an optional runtime role only through global profile activation.
 package models
 
 import (

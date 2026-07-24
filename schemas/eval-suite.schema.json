@@ -22,6 +22,7 @@
             "enum": [
               "runtime-liveness",
               "runtime-readiness",
+              "embedding-health",
               "runtime-roles-loaded",
               "runtime-manifest-valid",
               "chat-completion",

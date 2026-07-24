@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 import sovereign_evals.benchmark  # noqa: F401 — registers benchmark check types
-import sovereign_evals.evaluation  # noqa: F401 — registers retrieval/omni checks
+import sovereign_evals.evaluation  # noqa: F401 — registers retrieval evaluation checks
 from sovereign_evals.endpoints import Endpoints
 from sovereign_evals.schemas import validation_errors
 from sovereign_evals.smoke.checks import REGISTRY, SKIPPED, SuiteContext

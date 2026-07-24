@@ -1,0 +1,25 @@
+#!/bin/bash
+set -eu
+
+PACKAGE_ROOT=/usr/local/share/sovereign-stack
+VERSION="$(cat "$PACKAGE_ROOT/VERSION")"
+INSTALL_USER="$(stat -f '%Su' /dev/console)"
+if [ -z "$INSTALL_USER" ] || [ "$INSTALL_USER" = root ] || [ "$INSTALL_USER" = loginwindow ]; then
+  echo "No signed-in desktop user was found; run /usr/local/bin/sovereign-install after signing in." >&2
+  exit 0
+fi
+INSTALL_HOME="$(dscl . -read "/Users/$INSTALL_USER" NFSHomeDirectory | awk '{print $2}')"
+LOG_DIR="$INSTALL_HOME/Library/Logs/SovereignStack"
+install -d -m 700 -o "$INSTALL_USER" "$LOG_DIR"
+install -m 600 -o "$INSTALL_USER" /dev/null "$LOG_DIR/install.log"
+
+# The native installer finishes immediately while the reviewed shell installer
+# starts the portal, opens first-run setup, and completes provisioning in the
+# background as the owning desktop user.
+sudo -u "$INSTALL_USER" env \
+  HOME="$INSTALL_HOME" \
+  SOVEREIGN_VERSION="$VERSION" \
+  SOVEREIGN_ACCESS_MODE=desktop \
+  /usr/bin/nohup /bin/bash "$PACKAGE_ROOT/install.sh" \
+  >>"$LOG_DIR/install.log" 2>&1 &
+exit 0

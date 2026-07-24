@@ -10,6 +10,7 @@ description: Startup and end-to-end smoke checks (design.md §19.1)
 checks:
   - type: runtime-liveness
   - type: runtime-readiness
+  - type: embedding-health
   - type: runtime-roles-loaded
   - type: runtime-manifest-valid
 
@@ -21,13 +22,7 @@ checks:
     params: { target: runtime }
   - type: text-embedding
     id: embedding-direct
-    params: { target: runtime }
-  - type: image-embedding
-    id: image-embedding-direct
-    params: { target: runtime }
-  - type: audio-embedding
-    id: audio-embedding-direct
-    params: { target: runtime }
+    params: { target: embeddings, dimensions: 768 }
 
   - type: chat-completion
     id: chat-via-gateway

@@ -33,7 +33,7 @@ jobs:
         run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
       - name: Shell and repository checks
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/postinst
           chmod +x tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
           git diff --check
@@ -56,6 +56,85 @@ jobs:
           docker compose --project-directory deploy --env-file deploy/.env \
             -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
 
+  native-linux:
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Ubuntu installer package
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ROOT="$RUNNER_TEMP/sovereign-deb"
+          mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
+          cp deploy/scripts/install.sh "$ROOT/usr/local/share/sovereign-stack/install.sh"
+          cp VERSION "$ROOT/usr/local/share/sovereign-stack/VERSION"
+          cp packaging/sovereign-install "$ROOT/usr/local/bin/sovereign-install"
+          cp packaging/linux/postinst "$ROOT/DEBIAN/postinst"
+          chmod 755 "$ROOT/DEBIAN/postinst" "$ROOT/usr/local/bin/sovereign-install" "$ROOT/usr/local/share/sovereign-stack/install.sh"
+          printf 'Package: sovereign-stack-installer\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Lazarus AI Research <support@lazarusai.com>\nDepends: bash, curl, tar, openssl\nDescription: One-click SovereignStack private AI appliance installer\n' "$VERSION" > "$ROOT/DEBIAN/control"
+          dpkg-deb --build --root-owner-group "$ROOT" "SovereignStack-$VERSION-amd64.deb"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux
+          path: SovereignStack-*.deb
+          if-no-files-found: error
+
+  native-macos:
+    needs: validate
+    runs-on: macos-15
+    env:
+      MACOS_INSTALLER_CERT_P12_BASE64: ${{ secrets.MACOS_INSTALLER_CERT_P12_BASE64 }}
+      MACOS_INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERT_PASSWORD }}
+      MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+      APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
+      APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+      APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Import Developer ID Installer certificate
+        run: |
+          set -euo pipefail
+          : "${MACOS_INSTALLER_CERT_P12_BASE64:?release requires the macOS installer certificate}"
+          : "${MACOS_INSTALLER_CERT_PASSWORD:?release requires the certificate password}"
+          : "${MACOS_INSTALLER_IDENTITY:?release requires the installer signing identity}"
+          KEYCHAIN="$RUNNER_TEMP/sovereign-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_INSTALLER_CERT_P12_BASE64" | base64 -D > "$RUNNER_TEMP/installer.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/installer.p12" -P "$MACOS_INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+      - name: Build, sign, and notarize macOS installer
+        run: |
+          set -euo pipefail
+          : "${APPLE_NOTARY_ID:?release requires Apple notarization credentials}"
+          : "${APPLE_NOTARY_TEAM_ID:?release requires an Apple team ID}"
+          : "${APPLE_NOTARY_PASSWORD:?release requires an app-specific notarization password}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          ROOT="$RUNNER_TEMP/sovereign-pkg"
+          mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
+          cp deploy/scripts/install.sh "$ROOT/usr/local/share/sovereign-stack/install.sh"
+          cp VERSION "$ROOT/usr/local/share/sovereign-stack/VERSION"
+          cp packaging/sovereign-install "$ROOT/usr/local/bin/sovereign-install"
+          chmod 755 "$ROOT/usr/local/bin/sovereign-install" "$ROOT/usr/local/share/sovereign-stack/install.sh"
+          pkgbuild --root "$ROOT" --scripts packaging/macos \
+            --identifier ai.lazarus.sovereign-stack.installer --version "$VERSION" \
+            "$RUNNER_TEMP/SovereignStack-unsigned.pkg"
+          productsign --sign "$MACOS_INSTALLER_IDENTITY" "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64.pkg"
+          xcrun notarytool submit "SovereignStack-$VERSION-arm64.pkg" \
+            --apple-id "$APPLE_NOTARY_ID" --team-id "$APPLE_NOTARY_TEAM_ID" \
+            --password "$APPLE_NOTARY_PASSWORD" --wait
+          xcrun stapler staple "SovereignStack-$VERSION-arm64.pkg"
+          pkgutil --check-signature "SovereignStack-$VERSION-arm64.pkg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-macos
+          path: SovereignStack-*.pkg
+          if-no-files-found: error
+
   images:
     needs: validate
     runs-on: ubuntu-24.04
@@ -65,12 +144,19 @@ jobs:
         include:
           - name: sovereign-control
             dockerfile: control/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - name: sovereign-docker-proxy
             dockerfile: docker-proxy/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - name: sovereign-evals
             dockerfile: evals/Dockerfile
+            platforms: linux/amd64,linux/arm64
           - name: sovereign-workspace
             dockerfile: workspace/Dockerfile
+            platforms: linux/amd64,linux/arm64
+          - name: sovereign-embeddings
+            dockerfile: embeddinggemma/Dockerfile.cuda
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -88,7 +174,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms }}
           push: true
           build-args: VERSION=${{ env.VERSION }}
           tags: ${{ env.REGISTRY }}/${{ matrix.name }}:${{ env.VERSION }}
@@ -112,7 +198,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [validate, images]
+    needs: [validate, images, native-linux, native-macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +214,13 @@ jobs:
           pattern: digest-*
           path: digests
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native
+          merge-multiple: true
+      - name: Stage native installers
+        run: mv native/SovereignStack-* .
       - name: Resolve required runtime releases
         run: |
           set -euo pipefail
@@ -157,6 +250,22 @@ jobs:
           python3 -m pip install jsonschema PyYAML
           python3 release/validate_contracts.py
           test "$(python3 -c 'import json; print(json.load(open("release/manifest.json"))["version"])')" = "$VERSION"
+      - name: Vendor pinned EmbeddingGemma Metal executable
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/assets
+          curl -fsSL --retry 4 \
+            -o deploy/assets/embeddinggemma-darwin-arm64-metal \
+            https://github.com/QuixiAI/embeddinggemma.c/releases/download/v0.3.1/embeddinggemma-darwin-arm64-metal
+          echo 'c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5  deploy/assets/embeddinggemma-darwin-arm64-metal' | sha256sum -c -
+          chmod 755 deploy/assets/embeddinggemma-darwin-arm64-metal
+      - name: Build host lifecycle binaries
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          (cd control && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../deploy/assets/sovereign-hostd-darwin-arm64 ./cmd/sovereign-hostd)
+          (cd control && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o ../deploy/assets/sovereign-hostd-linux-amd64 ./cmd/sovereign-hostd)
+          chmod 755 deploy/assets/sovereign-hostd-*
       - name: Package release
         run: |
           set -euo pipefail
@@ -178,11 +287,16 @@ jobs:
           format: spdx-json
       - name: Sign release artifacts
         run: |
+          set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           ARCHIVE="sovereign-stack-$VERSION.tar.gz"
           mv sovereign-stack.spdx.json "sovereign-stack-$VERSION.spdx.json"
           cosign sign-blob --yes --bundle "$ARCHIVE.sigstore.json" "$ARCHIVE"
           cosign sign-blob --yes --bundle release-manifest.sigstore.json release/manifest.json
+          for installer in SovereignStack-*.pkg SovereignStack-*.deb; do
+            sha256sum "$installer" > "$installer.sha256"
+            cosign sign-blob --yes --bundle "$installer.sigstore.json" "$installer"
+          done
           cp release/manifest.json "sovereign-release-manifest-$VERSION.json"
       - name: Verify piped installer against signed release archive
         run: |
@@ -206,7 +320,8 @@ jobs:
             "$TEST_ROOT/appliance/releases/${GITHUB_REF_NAME#v}"
           grep -qx "SOVEREIGN_VERSION=${GITHUB_REF_NAME#v}" "$TEST_ROOT/appliance/.env"
           for key in SOVEREIGN_CONTROL_IMAGE SOVEREIGN_DOCKER_PROXY_IMAGE \
-            SOVEREIGN_EVALS_IMAGE SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE; do
+            SOVEREIGN_EVALS_IMAGE SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE \
+            SOVEREIGN_EMBEDDINGS_IMAGE; do
             grep -Eq "^$key=ghcr.io/lazarus-ai-research/[^@]+@sha256:[0-9a-f]{64}$" \
               "$TEST_ROOT/appliance/.env"
           done
@@ -217,7 +332,7 @@ jobs:
             -f "$TEST_ROOT/appliance/current/deploy/compose/compose.runtime.cuda.yml" \
             --profile tools config > "$TEST_ROOT/compose.yml"
           for image in sovereign-control sovereign-docker-proxy sovereign-evals \
-            sovereign-workspace sovereign-runtime; do
+            sovereign-workspace sovereign-runtime sovereign-embeddings; do
             grep -Eq "image: ghcr.io/lazarus-ai-research/$image:[^ ]+@sha256:[0-9a-f]{64}$" \
               "$TEST_ROOT/compose.yml"
           done
@@ -232,3 +347,9 @@ jobs:
             sovereign-stack-*.spdx.json
             sovereign-release-manifest-*.json
             release-manifest.sigstore.json
+            SovereignStack-*.pkg
+            SovereignStack-*.pkg.sha256
+            SovereignStack-*.pkg.sigstore.json
+            SovereignStack-*.deb
+            SovereignStack-*.deb.sha256
+            SovereignStack-*.deb.sigstore.json

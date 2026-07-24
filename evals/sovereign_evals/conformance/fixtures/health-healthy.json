@@ -9,10 +9,8 @@
       "served_model_name": "assistant-large"
     },
     "embedding": {
-      "status": "healthy",
-      "model_loaded": true,
-      "served_model_name": "embedding-omni-default",
-      "modalities": ["text", "image", "audio"]
+      "status": "disabled",
+      "model_loaded": false
     }
   }
 }

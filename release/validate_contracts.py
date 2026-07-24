@@ -19,6 +19,7 @@ IMAGE_LOCK_KEYS = [
     ("SOVEREIGN_WORKSPACE_IMAGE", "sovereign-workspace"),
     ("SOVEREIGN_RUNTIME_CUDA_IMAGE", "sovereign-runtime-cuda"),
     ("SOVEREIGN_RUNTIME_METAL_IMAGE", "sovereign-runtime-metal"),
+    ("SOVEREIGN_EMBEDDINGS_IMAGE", "sovereign-embeddings"),
 ]
 
 

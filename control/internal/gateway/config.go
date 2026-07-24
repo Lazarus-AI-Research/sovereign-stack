@@ -19,8 +19,8 @@ type SecretResolver interface {
 
 // GenerateConfig renders the LiteLLM config from the product's registries
 // (design.md §2.2: generated configuration, UI never exposed). Every stable
-// alias — generation models and embedding profiles — routes to the single
-// runtime endpoint; remote/cloud models keep their registry-declared routes.
+// alias routes to its owning service; remote/cloud models keep their
+// registry-declared routes.
 func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Registry, profiles *embeddings.Registry, secrets SecretResolver) error {
 	entries, err := modelRegistry.List()
 	if err != nil {
@@ -33,60 +33,82 @@ func GenerateConfig(ctx context.Context, path string, modelRegistry *models.Regi
 
 	seen := map[string]bool{}
 	var modelList []map[string]any
-	addRuntimeRoute := func(alias string) {
+	addRoute := func(alias string, params map[string]any) {
 		if alias == "" || seen[alias] {
 			return
 		}
 		seen[alias] = true
 		modelList = append(modelList, map[string]any{
-			"model_name": alias,
-			"litellm_params": map[string]any{
-				"model":    "openai/" + alias,
-				"api_base": "http://sovereign-runtime:8000/v1",
-				"api_key":  "os.environ/SOVEREIGN_RUNTIME_API_KEY",
-			},
+			"model_name": alias, "litellm_params": params,
 		})
+	}
+	addOpenAIRoute := func(alias, upstreamModel, baseURL, apiKey string) {
+		addRoute(alias, map[string]any{
+			"model": "openai/" + upstreamModel, "api_base": baseURL, "api_key": apiKey,
+		})
+	}
+	entryByID := map[string]models.Entry{}
+	for _, entry := range entries {
+		entryByID[entry.ID] = entry
+	}
+	entryParams := func(entry models.Entry) (map[string]any, error) {
+		model := entry.Model
+		if !strings.Contains(model, "/") {
+			switch entry.Provider {
+			case "openai", "anthropic", "gemini":
+				model = entry.Provider + "/" + model
+			case "openai-compatible", "custom":
+				model = "openai/" + model
+			}
+		}
+		params := map[string]any{"model": model}
+		if entry.BaseURL != "" {
+			params["api_base"] = entry.BaseURL
+		}
+		if entry.CredentialID != "" {
+			if secrets == nil {
+				return nil, fmt.Errorf("model %q references a credential but the encrypted vault is unavailable", entry.ID)
+			}
+			secret, err := secrets.Secret(ctx, entry.CredentialID)
+			if err != nil {
+				return nil, fmt.Errorf("model %q credential %q is not configured", entry.ID, entry.CredentialID)
+			}
+			params["api_key"] = secret
+		}
+		return params, nil
 	}
 
 	// Product aliases always route: the generation alias plus every
 	// embedding profile's served name.
-	addRuntimeRoute("assistant-large")
-	for _, profile := range profileMap {
-		addRuntimeRoute(profile.ServedModelName)
+	addOpenAIRoute("assistant-large", "assistant-large", "http://sovereign-runtime:8000/v1", "os.environ/SOVEREIGN_RUNTIME_API_KEY")
+	for profileID, profile := range profileMap {
+		switch profile.Provider {
+		case "embeddinggemma":
+			addOpenAIRoute(profile.ServedModelName, profile.ServedModelName, "os.environ/SOVEREIGN_EMBEDDINGS_BASE_URL", "not-required")
+		case "sovereign-runtime":
+			addOpenAIRoute(profile.ServedModelName, profile.ServedModelName, "http://sovereign-runtime:8000/v1", "os.environ/SOVEREIGN_RUNTIME_API_KEY")
+		case "openai-compatible":
+			entry, ok := entryByID[profile.ModelEntryID]
+			if !ok {
+				return fmt.Errorf("embedding profile %q references unknown model entry %q", profileID, profile.ModelEntryID)
+			}
+			params, err := entryParams(entry)
+			if err != nil {
+				return err
+			}
+			addRoute(profile.ServedModelName, params)
+		}
 	}
 	for _, entry := range entries {
 		if entry.Source != "remote" && entry.Source != "cloud" {
 			continue
 		}
 		if !seen[entry.ID] {
-			seen[entry.ID] = true
-			model := entry.Model
-			if !strings.Contains(model, "/") {
-				switch entry.Provider {
-				case "openai", "anthropic", "gemini":
-					model = entry.Provider + "/" + model
-				case "openai-compatible", "custom":
-					model = "openai/" + model
-				}
+			params, err := entryParams(entry)
+			if err != nil {
+				return err
 			}
-			params := map[string]any{"model": model}
-			if entry.BaseURL != "" {
-				params["api_base"] = entry.BaseURL
-			}
-			if entry.CredentialID != "" {
-				if secrets == nil {
-					return fmt.Errorf("model %q references a credential but the encrypted vault is unavailable", entry.ID)
-				}
-				secret, err := secrets.Secret(ctx, entry.CredentialID)
-				if err != nil {
-					return fmt.Errorf("model %q credential %q is not configured", entry.ID, entry.CredentialID)
-				}
-				params["api_key"] = secret
-			}
-			modelList = append(modelList, map[string]any{
-				"model_name":     entry.ID,
-				"litellm_params": params,
-			})
+			addRoute(entry.ID, params)
 		}
 	}
 

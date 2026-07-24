@@ -130,6 +130,7 @@
     }
     process.env.GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX = String(body.query_prefix || "");
     process.env.GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX = String(body.document_prefix || "");
+    process.env.EMBEDDING_MODEL_PREF = String(body.served_model_name || process.env.EMBEDDING_MODEL_PREF || "embedding-gemma-default");
 
     const { Workspace } = require("/app/server/models/workspace");
     const { Document } = require("/app/server/models/documents");
@@ -198,6 +199,57 @@
     }));
   }
 
+  async function enableMultiUser(firstAdminId) {
+    const { SystemSettings } = require("/app/server/models/systemSettings");
+    if (await SystemSettings.isMultiUserMode()) return;
+    const { BrowserExtensionApiKey } = require("/app/server/models/browserExtensionApiKey");
+    const { Memory } = require("/app/server/models/memory");
+    const { WorkspaceChats } = require("/app/server/models/workspaceChats");
+    const { MobileDevice } = require("/app/server/models/mobileDevice");
+    const { SlashCommandPresets } = require("/app/server/models/slashCommandsPresets");
+    const { AgentSkillWhitelist } = require("/app/server/models/agentSkillWhitelist");
+    await SystemSettings._updateSettings({ multi_user_mode: true });
+    await BrowserExtensionApiKey.migrateApiKeysToMultiUser(firstAdminId);
+    await Memory.migrateToMultiUser(firstAdminId);
+    await WorkspaceChats.migrateToMultiUser(firstAdminId);
+    await MobileDevice.migrateDevicesToMultiUser(firstAdminId);
+    await SlashCommandPresets.migrateToMultiUser(firstAdminId);
+    await AgentSkillWhitelist.clearSingleUserWhitelist();
+  }
+
+  async function identitySession(body) {
+    const username = String(body.username || "").toLowerCase();
+    const sovereignRole = String(body.role || "member");
+    const role = sovereignRole === "member" ? "default" : sovereignRole;
+    if (!/^[a-z][a-z0-9._@-]{1,63}$/.test(username)) throw new Error("invalid Control username");
+    if (!['admin', 'manager', 'default'].includes(role)) throw new Error("invalid Control role");
+
+    const { User } = require("/app/server/models/user");
+    const { Workspace } = require("/app/server/models/workspace");
+    const { WorkspaceUser } = require("/app/server/models/workspaceUsers");
+    const { TemporaryAuthToken } = require("/app/server/models/temporaryAuthToken");
+    let user = await User.get({ username });
+    if (!user) {
+      const password = crypto.randomBytes(32).toString("base64url");
+      const created = await User.create({ username, password, role });
+      if (!created.user) throw new Error(created.error || "failed to mirror Control user");
+      user = created.user;
+    }
+    await enableMultiUser(user.id);
+    const updated = await User.update(user.id, { role, suspended: Boolean(body.suspended) });
+    if (!updated.success && updated.error !== "No valid updates applied.") throw new Error(updated.error);
+
+    await WorkspaceUser.delete({ user_id: Number(user.id) });
+    if (role !== "admin") {
+      const allowed = new Set((body.workspace_slugs || []).map(String));
+      const workspaces = await Workspace.where({ slug: { in: [...allowed] } });
+      await WorkspaceUser.createMany(user.id, workspaces.map((workspace) => workspace.id));
+    }
+    const issued = await TemporaryAuthToken.issue(user.id);
+    if (!issued.token) throw new Error(issued.error || "failed to issue Workspace session");
+    return { user_id: user.id, login_path: `/sso/simple?token=${issued.token}` };
+  }
+
   const server = http.createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");
     if (request.method === "GET" && request.url === "/health") {
@@ -214,6 +266,20 @@
         response.end(JSON.stringify({ workspaces: await listWorkspaces() }));
       } catch (error) {
         response.statusCode = 500;
+        response.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    if (request.method === "POST" && request.url === "/internal/identity/session") {
+      if (!authorized(request)) {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      try {
+        response.end(JSON.stringify(await identitySession(await readJSON(request))));
+      } catch (error) {
+        response.statusCode = 422;
         response.end(JSON.stringify({ error: error.message }));
       }
       return;

@@ -70,6 +70,14 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 			maintenance_reason TEXT,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`,
+		`CREATE TABLE IF NOT EXISTS vectors.embedding_state (
+			singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+			profile_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			served_model_name TEXT NOT NULL,
+			dimensions INTEGER NOT NULL,
+			activated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS index_versions_one_active
 			ON vectors.index_versions(workspace_id) WHERE status = 'active'`,
 	}
@@ -104,6 +112,19 @@ type Version struct {
 	StartedAt            *time.Time `json:"started_at,omitempty"`
 	FinishedAt           *time.Time `json:"finished_at,omitempty"`
 	ActivatedAt          *time.Time `json:"activated_at,omitempty"`
+}
+
+type EmbeddingState struct {
+	ProfileID       string    `json:"profile_id"`
+	Provider        string    `json:"provider"`
+	ServedModelName string    `json:"served_model_name"`
+	Dimensions      int       `json:"dimensions"`
+	ActivatedAt     time.Time `json:"activated_at"`
+}
+
+type Binding struct {
+	WorkspaceID  string `json:"workspace_id"`
+	ProviderSlug string `json:"provider_slug"`
 }
 
 const columns = `id, workspace_id, provider_slug, profile_id, model_id, model_revision,
@@ -281,8 +302,8 @@ func (s *Store) Activate(ctx context.Context, id string) (Version, error) {
 	if err != nil {
 		return Version{}, err
 	}
-	if version.Status == "failed" || version.Dimensions < 1 || version.VectorCount < 1 {
-		return Version{}, errors.New("only a validated index with vectors can be activated")
+	if version.Status != "validating" || version.Dimensions < 1 || (version.VectorCount < 1 && version.DocumentCount > 0) {
+		return Version{}, errors.New("only a validated index can be activated")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE vectors.index_versions SET status='inactive'
 		WHERE workspace_id=$1 AND status='active' AND id<>$2`, version.WorkspaceID, id); err != nil {
@@ -299,6 +320,96 @@ func (s *Store) Activate(ctx context.Context, id string) (Version, error) {
 		return Version{}, err
 	}
 	return version, tx.Commit(ctx)
+}
+
+func (s *Store) EmbeddingState(ctx context.Context) (EmbeddingState, error) {
+	var state EmbeddingState
+	err := s.pool.QueryRow(ctx, `SELECT profile_id,provider,served_model_name,dimensions,activated_at
+		FROM vectors.embedding_state WHERE singleton=true`).
+		Scan(&state.ProfileID, &state.Provider, &state.ServedModelName, &state.Dimensions, &state.ActivatedAt)
+	return state, err
+}
+
+func (s *Store) Bindings(ctx context.Context) ([]Binding, error) {
+	rows, err := s.pool.Query(ctx, `SELECT workspace_id::text,provider_slug FROM vectors.workspace_bindings ORDER BY provider_slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	bindings := []Binding{}
+	for rows.Next() {
+		var binding Binding
+		if err := rows.Scan(&binding.WorkspaceID, &binding.ProviderSlug); err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
+}
+
+func (s *Store) SetAllMaintenance(ctx context.Context, enabled bool, reason string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE vectors.workspace_bindings SET maintenance=$1,
+		maintenance_reason=NULLIF($2,''),updated_at=now()`, enabled, reason)
+	return err
+}
+
+// ActivationLock serializes appliance-wide provider changes across Control
+// replicas. The returned release function must always be called.
+func (s *Store) ActivationLock(ctx context.Context) (func(), error) {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext('sovereign.embedding.activation'))`); err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return func() {
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('sovereign.embedding.activation'))`)
+		conn.Release()
+	}, nil
+}
+
+// ActivateBatch switches every workspace binding and the appliance embedding
+// state in one database transaction. Existing active indexes remain untouched
+// until all candidates have rebuilt and validated.
+func (s *Store) ActivateBatch(ctx context.Context, ids []string, state EmbeddingState) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, id := range ids {
+		version, err := scan(tx.QueryRow(ctx, "SELECT "+columns+" FROM vectors.index_versions WHERE id=$1 FOR UPDATE", id))
+		if err != nil {
+			return err
+		}
+		if version.Status != "validating" || version.Dimensions < 1 || (version.VectorCount < 1 && version.DocumentCount > 0) {
+			return fmt.Errorf("index %s is not validated", id)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE vectors.index_versions SET status='inactive'
+			WHERE workspace_id=$1 AND status='active' AND id<>$2`, version.WorkspaceID, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE vectors.index_versions SET status='active',activated_at=now(),
+			finished_at=COALESCE(finished_at,now()) WHERE id=$1`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE vectors.workspace_bindings SET active_index_version=$2,
+			maintenance=false,maintenance_reason=NULL,updated_at=now() WHERE workspace_id=$1`, version.WorkspaceID, id); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO vectors.embedding_state
+		(singleton,profile_id,provider,served_model_name,dimensions,activated_at)
+		VALUES (true,$1,$2,$3,$4,now()) ON CONFLICT (singleton) DO UPDATE SET
+		profile_id=EXCLUDED.profile_id,provider=EXCLUDED.provider,
+		served_model_name=EXCLUDED.served_model_name,dimensions=EXCLUDED.dimensions,activated_at=now()`,
+		state.ProfileID, state.Provider, state.ServedModelName, state.Dimensions)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) Active(ctx context.Context, workspaceID string) (Version, error) {

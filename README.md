@@ -17,21 +17,21 @@ Release-candidate users should pin both the installer URL and
   generation.
 - **Sovereign Control** for models, provider credentials, embedding profiles,
   evaluations, backups, offline bundles, and system health.
-- **Sovereign Runtime** for local generation and embeddings, with certified
-  Metal and CUDA profiles.
+- **Sovereign Runtime** for local generation, plus a dedicated
+  `embeddinggemma.c` service for text embeddings.
 - **LiteLLM and pgvector** for stable model aliases, gateway policy, and local
   vector storage.
 - **Prometheus, Grafana, Loki, OpenTelemetry, and Phoenix** for local
   operational visibility.
 - Signed release archives, signed first-party images, immutable image digests,
-  generated credentials, and a restricted Docker control proxy.
+  first-admin claiming, and a restricted Docker control proxy.
 
 ## Supported hosts
 
 | Profile | Host requirements | v0.1 capability |
 | --- | --- | --- |
-| `metal-arm64` | Apple Silicon Mac, 32 GB+ unified memory, Docker Desktop with Compose v2 | Text chat, text embeddings, and pgvector RAG through a signed Metal host agent |
-| `cuda-x86_64` | Ubuntu 24.04 x86_64, NVIDIA GPU with 24 GB+ VRAM, Docker Engine with Compose v2, NVIDIA driver, and NVIDIA Container Toolkit | Text chat, text/image/audio embeddings, and cross-modal retrieval |
+| `metal-arm64` | Apple Silicon Mac, 32 GB+ unified memory, Docker Desktop with Compose v2 | Text chat through a signed generation agent, plus text embeddings and pgvector RAG through a loopback-only Metal service |
+| `cuda-x86_64` | Ubuntu 24.04 x86_64, NVIDIA GPU with 24 GB+ VRAM, Docker Engine with Compose v2, NVIDIA driver, and NVIDIA Container Toolkit | Text chat, text embeddings, and pgvector RAG |
 
 Both profiles require `curl`, `tar`, `openssl`, a running Docker daemon, at
 least 20 GB free disk, and network access for the initial install. At least
@@ -43,10 +43,15 @@ See [hardware profiles](docs/hardware-profiles.md) for the exact support matrix.
 
 ## Install
 
+Tagged releases provide a notarized Apple Silicon `.pkg` and an Ubuntu AMD64
+`.deb` for a native one-click install. The signed shell path below remains the
+supported choice for headless servers and automation.
+
 Run the same command on a supported Mac or CUDA host. The installer detects the
-profile, verifies the signed release, generates credentials, pulls the exact
-digest-pinned images, starts the appliance, waits for the runtime, and runs the
-smoke suite.
+profile, verifies the signed release, generates appliance secrets, pulls the
+exact digest-pinned images, and starts the portal immediately while models
+continue loading. It opens the one-time first-administrator setup page in the
+default browser and completes runtime smoke tests in the background.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
@@ -54,8 +59,9 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 ```
 
 The first run can take a while because it downloads a pinned signature verifier,
-container images, and model weights. Leave the installer running until it
-prints the local URL and credentials path. Set `HF_TOKEN` in the installer
+container images, and model weights. The portal opens as soon as its core
+services are ready; downloads and model loading remain visible under
+**Activity** while installation finishes. Set `HF_TOKEN` in the installer
 environment before running the command only when a configured model repository
 requires authentication.
 
@@ -71,13 +77,30 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
   | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --profile cuda-x86_64
 ```
 
+When installing over SSH, the installer selects private-LAN access and prints
+one reachable portal URL (plus a QR code when `qrencode` is installed). You can
+also choose access explicitly:
+
+```bash
+# Local desktop
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --access desktop
+
+# Headless/private network
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --access lan
+
+# Public domain with automatic HTTPS
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --domain ai.example.com
+```
+
 The default install locations are:
 
 | Path | Purpose |
 | --- | --- |
-| `~/.sovereign` | Releases, configuration, credentials, models, reports, backups, and appliance state |
+| `~/.sovereign` | Releases, configuration, secrets, models, reports, backups, and appliance state |
 | `~/.local/bin/sovereign` | Management CLI |
-| `~/.sovereign/credentials` | Generated Control URL, username, and password; owner-readable only |
 
 PostgreSQL and observability service data live in Docker-managed named volumes,
 not under `~/.sovereign`; the storage table in [initial configuration](#3-choose-logging-and-tracing)
@@ -89,38 +112,32 @@ offline installation are documented in [installation](docs/installation.md).
 
 ## First use
 
-Add the CLI to `PATH` if your shell does not already include `~/.local/bin`:
+The installer opens the single Sovereign Portal. On a headless host, open the
+one URL printed by the installer. The first browser session walks through:
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+1. Creating the first administrator (there is no default password).
+2. Choosing local-only or private-network access.
+3. Reviewing the detected hardware and recommended model.
+4. Watching provisioning progress and opening Chat.
 
-Confirm the installed release and health:
+Chat, Activity, Grafana, Phoenix, models, embeddings, provider connections,
+people, backups, updates, repair, and diagnostics all remain inside that portal.
+Normal operation does not require Docker commands, container access, or
+memorized service ports.
 
-```bash
-sovereign version
-sovereign validate
-sovereign status
-```
-
-Open these local URLs:
-
-- Workspace: <http://127.0.0.1:8880/>
-- Sovereign Control: <http://127.0.0.1:8880/control/>
-
-Read the generated Control login when needed:
-
-```bash
-cat "$HOME/.sovereign/credentials"
-```
+The `sovereign` CLI remains available for automation and recovery. If a setup
+link expires before the first administrator is created, run
+`sovereign admin setup-link` on the host to issue another 30-minute link.
 
 The shipped local models and privacy-preserving observability defaults are
 ready to use without a provider key. The next section explains how to keep
 those defaults or deliberately change them before adding production data.
 
-The public ingress binds to host loopback by default. Remote access requires an
-operator-managed TLS reverse proxy and an explicit security review; do not
-expose internal container ports directly.
+The portal binds to host loopback by default. Administrators can change this in
+**Network Access** without SSH; the compatible `sovereign access` commands
+remain available. Public cleartext HTTP still requires the deliberately long
+`--i-understand-this-is-insecure` CLI acknowledgement. Internal service ports
+are never published.
 
 ## Initial configuration
 
@@ -134,7 +151,7 @@ The installed defaults are:
 | Setting | CUDA | Apple Silicon |
 | --- | --- | --- |
 | Generation route | Local `assistant-large` | Local `assistant-large` |
-| Embedding profile | `omni-default` (`embedding-omni-default`) | `text-compact` (`embedding-text-compact`) |
+| Embedding profile | `gemma-default` (`embedding-gemma-default`) | `gemma-default` (`embedding-gemma-default`) |
 | Phoenix tracing | Metadata only | Metadata only |
 | Prompt and response logging | Off | Off |
 | Full-content traces | Off | Off |
@@ -143,12 +160,14 @@ These defaults need no cloud account and are the recommended starting point.
 
 ### 1. Choose the generation model
 
-Open **Control > Models**. The active local model is served to Workspace using
-the stable `assistant-large` route, even if its underlying checkpoint changes.
+Open **Models** in the portal. The recommended, hardware-compatible model is
+shown first and installs with one confirmation. The active local model is
+served to Workspace using the stable `assistant-large` route, even if its
+underlying checkpoint changes.
 
 To use another local Hugging Face, ModelScope, or local-path model:
 
-1. Select **Add model**.
+1. Select **Add custom model** to open Advanced configuration.
 2. Set **Role** to **Generation**, choose the source, and enter the model or
    repository. Catalog models should include an immutable commit revision.
 3. Save it, select **Load**, wait for the runtime to become ready, and then
@@ -161,9 +180,9 @@ needs to change. A gated Hugging Face repository also requires `HF_TOKEN` in
 
 To use a cloud or OpenAI-compatible remote model:
 
-1. In **Control > Access**, save the provider credential. The secret is
+1. Under **API & Providers**, save the provider credential. The secret is
    encrypted and is not returned after submission.
-2. In **Control > Models**, add a **Generation** model. Give it a short
+2. Under **Models**, add a **Generation** model. Give it a short
    **Product ID**, such as `team-coding-model`; select the credential and set
    the remote base URL when applicable.
 3. Select **Load** to regenerate and restart the private gateway, then select
@@ -185,7 +204,7 @@ To use a cloud or OpenAI-compatible remote model:
 
 Keep `GENERIC_OPEN_AI_MODEL_PREF=assistant-large` for a local model. Remote and
 cloud routes send requests outside the appliance and may incur provider costs;
-review the provider's data policy first. Use **Control > Access > Gateway
+review the provider's data policy first. Use **Access > Gateway
 keys** to issue separate client keys with allowed-model, spend, RPM, and TPM
 limits.
 
@@ -195,46 +214,29 @@ Embedding identity includes the checkpoint, pooling, normalization, prefixes,
 preprocessing, and vector dimensions. It cannot be changed underneath an
 existing index.
 
-Open **Control > Knowledge** and select:
+Fresh installs activate the certified `gemma-default` profile automatically:
 
 | Profile | Hosts | Use it for | Workspace settings |
 | --- | --- | --- | --- |
-| `omni-default` | CUDA | Text, image, and audio retrieval | `EMBEDDING_MODEL_PREF=embedding-omni-default`; query and passage prefixes empty |
-| `text-compact` | CUDA or Apple Silicon | Smaller text-only retrieval | `EMBEDDING_MODEL_PREF=embedding-text-compact`; query prefix `search_query: `; passage prefix `search_document: ` |
+| `gemma-default` | CUDA or Apple Silicon | Text retrieval through `embeddinggemma.c` | Stable alias `embedding-gemma-default`; query prefix `task: search result \| query: `; passage prefix `title: none \| text: ` |
 
-Then:
+For a specialized local or OpenAI-compatible embedding model:
 
-1. Select **Validate** for the desired profile, followed by **Activate**.
-2. Make the matching Workspace settings explicit in
-   `~/.sovereign/.env`. For example, `text-compact` requires:
+1. Under **Models**, add a model-registry entry with the **Embedding** role.
+2. Under **Embeddings**, choose **Add provider**, select that registry entry,
+   and set the stable alias, pooling, normalization, and prefixes.
+3. Select **Validate**, then **Activate everywhere**. Control places retrieval
+   in maintenance, rebuilds every workspace, validates the candidates, and
+   changes the appliance provider and all workspace bindings atomically.
+4. Run `sovereign smoke embedding` and `sovereign smoke retrieval`.
 
-   ```dotenv
-   EMBEDDING_MODEL_PREF=embedding-text-compact
-   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX="search_query: "
-   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX="search_document: "
-   ```
-
-   For `omni-default`, use:
-
-   ```dotenv
-   EMBEDDING_MODEL_PREF=embedding-omni-default
-   GENERIC_OPEN_AI_EMBEDDING_QUERY_PREFIX=""
-   GENERIC_OPEN_AI_EMBEDDING_PASSAGE_PREFIX=""
-   ```
-
-3. Run `sovereign up` to apply the Workspace preference.
-4. Under **Workspace indexes**, rebuild every affected Workspace with the
-   selected profile. The old index remains active until the replacement has
-   been built and validated, then Control switches it atomically.
-5. Run `sovereign smoke embedding` and `sovereign smoke retrieval`.
-
-Do not ingest new documents between changing the Workspace preference and
-completing the corresponding index rebuild.
+Any failed activation restores the previous provider and indexes. No
+AnythingLLM environment variables or per-workspace provider edits are needed.
 
 ### 3. Choose logging and tracing
 
 The recommended v0.1 privacy posture is metadata-only tracing with all content
-capture disabled. Verify it under **Control > Settings > Privacy posture**:
+capture disabled. Verify it under **Settings > Privacy posture**:
 
 ```yaml
 # ~/.sovereign/config/feature-flags.yaml
@@ -285,24 +287,24 @@ use. Docker manages the physical location of named volumes; changing
 
 ### 4. Review the other common settings
 
-- **HTTP port:** The default is `8880`. Set `SOVEREIGN_HTTP_PORT` when running
-  the installer, or change `HTTP_PORT` in `~/.sovereign/.env` and run
-  `sovereign up`. Keep `SOVEREIGN_BIND_ADDRESS=127.0.0.1`; use an
-  operator-managed TLS reverse proxy for remote access.
+- **Portal access:** Use **Network Access** to choose this computer, a trusted
+  private network, or a domain with automatic public TLS. The compatible
+  `sovereign access` commands remain available for recovery. Public cleartext
+  HTTP is rejected unless its explicit insecure acknowledgement flag is supplied.
 - **Context limit:** Workspace defaults to
   `GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT=2048`. Do not set it above the active
   route's supported context length. Runtime model length, memory allocation,
   and concurrency are hardware-specific advanced settings in
-  `~/.sovereign/config/runtime.yaml`; changing them requires **Control >
-  Overview > Restart runtime** and the full evaluation gate.
-- **Provider access:** Store provider secrets in **Control > Access**, not in
+  `~/.sovereign/config/runtime.yaml`; changing them requires **System >
+  Restart runtime** and the full evaluation gate.
+- **Provider access:** Store provider secrets under **API & Providers**, not in
   model registry files. Issue scoped gateway keys rather than sharing the
   appliance master key.
 - **Branding:** Set the product name, company name, and colors under
-  **Control > Settings > Branding**.
+  **Settings > Branding**.
 - **Backups:** Run `sovereign backup` after initial configuration and copy the
-  verified backup off the appliance. Backups exclude `.env`, generated login
-  credentials, encryption keys, gateway secret configuration, and model
+  verified backup off the appliance. Backups exclude `.env`, first-admin claim
+  material, encryption keys, gateway secret configuration, and model
   caches. Encrypted provider credential records are in the database but need
   the excluded vault key, so preserve required secrets separately using an
   approved process.
@@ -328,6 +330,12 @@ that file, so non-secret preferences must be checked after an upgrade.
 
 ```text
 sovereign up
+sovereign open
+sovereign url
+sovereign access desktop
+sovereign access lan [private-ip]
+sovereign access domain <hostname>
+sovereign admin setup-link
 sovereign down
 sovereign status
 sovereign logs [compose log options]
@@ -361,7 +369,7 @@ sovereign down
 ```
 
 Additional evaluation suites include `quick`, `embedding`, `retrieval`,
-`mixed-role`, and the CUDA-specific `omni-embedding` suite. Reports are stored
+`mixed-role`, and `full`. Reports are stored
 under `~/.sovereign/reports` and are also visible in Control.
 
 ## Models and provider credentials
@@ -370,8 +378,7 @@ Local release models are pinned to immutable revisions. Stable aliases keep the
 workspace independent of engine-specific names:
 
 - `assistant-large` for generation.
-- `embedding-text-compact` for the Metal text embedding route.
-- `embedding-omni-default` for CUDA text, image, and audio embeddings.
+- `embedding-gemma-default` for text embeddings on every certified profile.
 
 Control can also register OpenAI-compatible endpoints and cloud presets for
 OpenAI, Anthropic, and Gemini. Provider API keys are encrypted credential
@@ -452,7 +459,7 @@ sovereign uninstall --purge --yes
 - **Gated model download** — export a valid `HF_TOKEN`, then re-run the same
   version-pinned installer; completed verified downloads are retained.
 - **Port 8880 already in use** — set `SOVEREIGN_HTTP_PORT` during install and
-  use the URL recorded in `~/.sovereign/credentials`.
+  run `sovereign url` to print the resulting portal URL.
 - **Another SovereignStack owns fixed containers** — stop that installation
   before starting this one. Takeover is deliberately refused to protect
   database volumes.

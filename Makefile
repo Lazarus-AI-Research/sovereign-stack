@@ -27,7 +27,7 @@ test-contracts: ## Validate schemas and checked-in configuration contracts
 	python3 release/validate_contracts.py
 
 test-scripts: ## Parse every shipped shell entrypoint
-	bash -n deploy/scripts/*.sh deploy/scripts/sovereign
+	bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/postinst
 	chmod +x tests/fixtures/bin/* tests/scripts/*.sh
 	tests/scripts/release-artifacts.sh
 	tests/scripts/install-lifecycle.sh
@@ -39,11 +39,12 @@ images: ## Build application images (context: repo root)
 	docker build --build-arg VERSION=$(VERSION) -f docker-proxy/Dockerfile -t $(REGISTRY)/sovereign-docker-proxy:$(VERSION) .
 	docker build -f evals/Dockerfile -t $(REGISTRY)/sovereign-evals:$(VERSION) .
 	docker build --build-arg VERSION=$(VERSION) -f workspace/Dockerfile -t $(REGISTRY)/sovereign-workspace:$(VERSION) .
+	docker build -f embeddinggemma/Dockerfile.cuda -t $(REGISTRY)/sovereign-embeddings:$(VERSION) .
 
 compose-validate: ## Validate the Compose configuration
-	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml config -q
-	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.cuda.yml config -q
-	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
+	SOVEREIGN_ENV_FILE=.env.example docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml config -q
+	SOVEREIGN_ENV_FILE=.env.example docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.cuda.yml config -q
+	SOVEREIGN_ENV_FILE=.env.example docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
 	@echo "compose configuration valid"
 
 clean: ## Remove build artifacts

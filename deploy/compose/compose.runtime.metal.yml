@@ -5,7 +5,7 @@ services:
   sovereign-runtime:
     image: ${SOVEREIGN_RUNTIME_IMAGE}
     volumes:
-      - ./config/runtime.metal.yaml:/runtime-config/runtime.yaml:ro
+      - ./config/runtime.yaml:/runtime-config/runtime.yaml:ro
       - ./models:/models
       - runtime_state:/runtime-state
     environment:

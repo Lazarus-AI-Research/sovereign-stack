@@ -4,7 +4,13 @@ All notable changes to Sovereign Stack are documented in this file.
 
 ## [Unreleased]
 
-- Release follow-up changes land here.
+- Replaced the runtime-hosted embedding models with the pinned
+  `embeddinggemma.c` v0.3.1 service and EmbeddingGemma Q4 GGUF on both
+  certified profiles.
+- Added an isolated CUDA sibling service and a loopback-only, launchd-managed
+  Metal host service while retaining the product's OpenAI embedding route.
+- Added an upgrade migration that preserves unrelated generation and remote
+  model configuration, with one-time backups of changed embedding config.
 
 ## [0.1.0-rc.3] - 2026-07-15
 

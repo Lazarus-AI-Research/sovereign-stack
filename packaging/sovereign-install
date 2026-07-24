@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if (( EUID == 0 )); then
+  echo "Run sovereign-install as the desktop user who will own the appliance, not with sudo." >&2
+  exit 2
+fi
+
+PACKAGE_ROOT="/usr/local/share/sovereign-stack"
+VERSION="$(<"$PACKAGE_ROOT/VERSION")"
+exec env SOVEREIGN_VERSION="$VERSION" bash "$PACKAGE_ROOT/install.sh" "$@"

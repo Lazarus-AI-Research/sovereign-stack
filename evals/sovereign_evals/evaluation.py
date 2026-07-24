@@ -30,8 +30,6 @@ def _vectors(ctx: SuiteContext, texts: list[str], target: str = "gateway") -> li
 @register("retrieval-quality")
 def retrieval_quality(ctx: SuiteContext, params: dict):
     """Prove the shipped embedding path and pgvector return the intended top-1 row."""
-    if not ctx.role("embedding").get("enabled"):
-        return True, SKIPPED + "embedding role disabled"
     import psycopg
 
     documents = params.get("documents") or [

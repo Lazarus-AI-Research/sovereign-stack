@@ -1,6 +1,6 @@
 // Package embeddings reads and manages embedding profiles (design.md §10,
 // §18.6). Profiles are file-backed product configuration; dimensions are
-// never stored here — they are discovered from the runtime (§10.1).
+// never stored here — they are discovered from the embedding service (§10.1).
 package embeddings
 
 import (
@@ -27,6 +27,7 @@ type Profile struct {
 	ChunkingStrategy     string   `yaml:"chunking_strategy" json:"chunking_strategy"`
 	PreprocessingVersion string   `yaml:"preprocessing_version" json:"preprocessing_version"`
 	Modalities           []string `yaml:"modalities" json:"modalities"`
+	ModelEntryID         string   `yaml:"model_entry_id,omitempty" json:"model_entry_id,omitempty"`
 }
 
 type profilesFile struct {
@@ -89,13 +90,33 @@ func (r *Registry) Get(id string) (Profile, error) {
 
 func (r *Registry) Put(id string, profile Profile) error {
 	if id == "" || profile.Model == "" || profile.ServedModelName == "" || profile.Revision == "" {
-		return fmt.Errorf("profile id, model, and served_model_name are required")
+		return fmt.Errorf("profile id, model, revision, and served_model_name are required")
 	}
 	if profile.Source == "" {
 		profile.Source = "huggingface"
 	}
 	if profile.DistanceMetric == "" {
 		profile.DistanceMetric = "cosine"
+	}
+	if profile.Pooling == "" {
+		profile.Pooling = "mean"
+	}
+	if profile.Normalization == "" {
+		profile.Normalization = "l2"
+	}
+	if profile.Pooling != "mean" && profile.Pooling != "last" && profile.Pooling != "cls" {
+		return fmt.Errorf("pooling must be mean, last, or cls")
+	}
+	if profile.Normalization != "l2" && profile.Normalization != "none" {
+		return fmt.Errorf("normalization must be l2 or none")
+	}
+	if profile.DistanceMetric != "cosine" && profile.DistanceMetric != "l2" && profile.DistanceMetric != "inner_product" {
+		return fmt.Errorf("distance_metric must be cosine, l2, or inner_product")
+	}
+	switch profile.Source {
+	case "huggingface", "modelscope", "local", "offline", "remote", "cloud":
+	default:
+		return fmt.Errorf("unknown profile source %q", profile.Source)
 	}
 	if profile.ChunkingStrategy == "" {
 		profile.ChunkingStrategy = "recursive-v1"
@@ -105,6 +126,18 @@ func (r *Registry) Put(id string, profile Profile) error {
 	}
 	if len(profile.Modalities) == 0 {
 		return fmt.Errorf("at least one modality is required")
+	}
+	switch profile.Provider {
+	case "embeddinggemma":
+		if profile.Model != EmbeddingGemmaModel {
+			return fmt.Errorf("embeddinggemma profiles must use %s", EmbeddingGemmaModel)
+		}
+	case "sovereign-runtime", "openai-compatible":
+		if profile.ModelEntryID == "" {
+			return fmt.Errorf("provider %q requires model_entry_id", profile.Provider)
+		}
+	default:
+		return fmt.Errorf("provider must be embeddinggemma, sovereign-runtime, or openai-compatible")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

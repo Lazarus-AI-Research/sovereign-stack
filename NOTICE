@@ -4,3 +4,7 @@ Copyright 2026 Lazarus AI Research
 This product includes a modified distribution of AnythingLLM, licensed under
 the MIT License. The upstream copyright and license text are shipped in the
 sovereign-workspace image and in THIRD_PARTY_NOTICES.md.
+
+This product includes embeddinggemma.c from QuixiAI, licensed under the MIT
+License. Its copyright and license text are retained in the
+sovereign-embeddings image and the installed Metal distribution.
