@@ -92,27 +92,28 @@ jobs:
       APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
-      - name: Import Developer ID Installer certificate
+      - name: Build macOS installer with optional Apple signing
         run: |
           set -euo pipefail
-          : "${MACOS_INSTALLER_CERT_P12_BASE64:?release requires the macOS installer certificate}"
-          : "${MACOS_INSTALLER_CERT_PASSWORD:?release requires the certificate password}"
-          : "${MACOS_INSTALLER_IDENTITY:?release requires the installer signing identity}"
-          KEYCHAIN="$RUNNER_TEMP/sovereign-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
-          printf '%s' "$MACOS_INSTALLER_CERT_P12_BASE64" | base64 -D > "$RUNNER_TEMP/installer.p12"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/installer.p12" -P "$MACOS_INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security list-keychain -d user -s "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-      - name: Build, sign, and notarize macOS installer
-        run: |
-          set -euo pipefail
-          : "${APPLE_NOTARY_ID:?release requires Apple notarization credentials}"
-          : "${APPLE_NOTARY_TEAM_ID:?release requires an Apple team ID}"
-          : "${APPLE_NOTARY_PASSWORD:?release requires an app-specific notarization password}"
+          signing_values=(
+            "$MACOS_INSTALLER_CERT_P12_BASE64"
+            "$MACOS_INSTALLER_CERT_PASSWORD"
+            "$MACOS_INSTALLER_IDENTITY"
+            "$APPLE_NOTARY_ID"
+            "$APPLE_NOTARY_TEAM_ID"
+            "$APPLE_NOTARY_PASSWORD"
+          )
+          signing_count=0
+          for value in "${signing_values[@]}"; do
+            if [[ -n "$value" ]]; then
+              signing_count=$((signing_count + 1))
+            fi
+          done
+          if (( signing_count != 0 && signing_count != ${#signing_values[@]} )); then
+            echo "Apple signing configuration is partial; configure all six credentials or none." >&2
+            exit 1
+          fi
+
           VERSION="${GITHUB_REF_NAME#v}"
           ROOT="$RUNNER_TEMP/sovereign-pkg"
           mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
@@ -123,6 +124,25 @@ jobs:
           pkgbuild --root "$ROOT" --scripts packaging/macos \
             --identifier ai.lazarus.sovereign-stack.installer --version "$VERSION" \
             "$RUNNER_TEMP/SovereignStack-unsigned.pkg"
+
+          if (( signing_count == 0 )); then
+            cp "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64-unsigned.pkg"
+            {
+              echo "### Unsigned macOS installer"
+              echo "Apple credentials were not configured. Publishing the explicitly named unsigned package with SHA-256 and Sigstore verification artifacts."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          KEYCHAIN="$RUNNER_TEMP/sovereign-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_INSTALLER_CERT_P12_BASE64" | base64 -D > "$RUNNER_TEMP/installer.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/installer.p12" -P "$MACOS_INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           productsign --sign "$MACOS_INSTALLER_IDENTITY" "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64.pkg"
           xcrun notarytool submit "SovereignStack-$VERSION-arm64.pkg" \
             --apple-id "$APPLE_NOTARY_ID" --team-id "$APPLE_NOTARY_TEAM_ID" \
@@ -224,9 +244,9 @@ jobs:
       - name: Resolve required runtime releases
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          RUNTIME_VERSION="$(jq -r .runtime_version release/release-source.json)"
           for profile in cuda-x86_64 metal-arm64; do
-            ref="$REGISTRY/sovereign-runtime:$profile-$VERSION"
+            ref="$REGISTRY/sovereign-runtime:$profile-$RUNTIME_VERSION"
             digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ {print $2; exit}')"
             test -n "$digest"
             case "$profile" in

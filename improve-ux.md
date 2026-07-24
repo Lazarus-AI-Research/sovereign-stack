@@ -4,10 +4,11 @@ Status: Implemented; release qualification and moderated usability measurement p
 Scope: Installation, onboarding, navigation, model management, embedded tools, operations, updates, recovery, accessibility, and compatibility
 
 Implementation note (2026-07-24): milestones 1–5 and the engineering portions
-of milestone 6 are implemented in this repository. Native release publication
-requires the configured Apple Developer ID/notarization secrets. The 8-of-10
-first-time-user measure remains a release research gate because it requires
-moderated sessions rather than a code change.
+of milestone 6 are implemented in this repository. Native releases publish an
+explicitly named unsigned macOS package until Apple Developer ID/notarization
+credentials are configured. The 8-of-10 first-time-user measure remains a
+release research gate because it requires moderated sessions rather than a code
+change.
 
 ## 1. Objective
 

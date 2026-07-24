@@ -26,9 +26,12 @@ import json
 import sys
 
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+runtime_version = manifest["runtime_version"]
 assets = {asset["name"]: asset for asset in manifest["assets"]}
 assert assets["embeddinggemma-darwin-arm64-metal"]["sha256"] == "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5"
 images = {image["name"]: image for image in manifest["images"] if image["first_party"]}
+assert images["sovereign-runtime-cuda"]["reference"].endswith(f"cuda-x86_64-{runtime_version}")
+assert images["sovereign-runtime-metal"]["reference"].endswith(f"metal-arm64-{runtime_version}")
 names = {
     "SOVEREIGN_CONTROL_IMAGE": "sovereign-control",
     "SOVEREIGN_DOCKER_PROXY_IMAGE": "sovereign-docker-proxy",
@@ -44,6 +47,32 @@ expected = {
     for key, name in names.items()
 }
 assert actual == expected
+PY
+
+# A release source from before runtime_version was introduced remains valid and
+# keeps the historical same-version behavior.
+python3 - "$ROOT/release/release-source.json" "$TEST_ROOT/legacy-source.json" <<'PY'
+import json
+import sys
+
+source = json.load(open(sys.argv[1], encoding="utf-8"))
+source.pop("runtime_version", None)
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    json.dump(source, output)
+PY
+python3 "$ROOT/release/generate_manifest.py" \
+  --source "$TEST_ROOT/legacy-source.json" \
+  --digest-dir "$TEST_ROOT/digests" \
+  --stack-commit 0000000000000000000000000000000000000000 \
+  --output "$TEST_ROOT/generated/legacy-manifest.json"
+python3 - "$TEST_ROOT/generated/legacy-manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["runtime_version"] == manifest["version"]
+runtime_images = [image for image in manifest["images"] if image["name"].startswith("sovereign-runtime-")]
+assert all(image["reference"].endswith(manifest["version"]) for image in runtime_images)
 PY
 
 mkdir -p "$TEST_ROOT/release-root/release"

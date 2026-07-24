@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
 PROFILE="${SOVEREIGN_PROFILE:-}"
-VERSION="${SOVEREIGN_VERSION:-0.1.0-rc.4}"
+VERSION="${SOVEREIGN_VERSION:-0.1.0-rc.5}"
 RELEASE_ROOT="${SOVEREIGN_RELEASE_ROOT:-$SOVEREIGN_HOME/current}"
 
 while [[ $# -gt 0 ]]; do
@@ -118,6 +118,18 @@ chmod 600 "$VAULT_KEY_FILE"
 printf '%s\n' "$HOSTD_TOKEN" > "$HOSTD_TOKEN_FILE"
 chmod 600 "$HOSTD_TOKEN_FILE"
 
+MANIFEST_FILE="$RELEASE_ROOT/release/manifest.json"
+IMAGE_LOCK_FILE="$RELEASE_ROOT/release/images.env"
+RUNTIME_VERSION="$VERSION"
+if [[ -f "$MANIFEST_FILE" ]]; then
+  MANIFEST_RUNTIME_VERSION="$(sed -n 's/.*"runtime_version": *"\([^"]*\)".*/\1/p' "$MANIFEST_FILE" | head -n 1)"
+  [[ -z "$MANIFEST_RUNTIME_VERSION" ]] || RUNTIME_VERSION="$MANIFEST_RUNTIME_VERSION"
+  [[ "$RUNTIME_VERSION" =~ ^0\.1\.0(-rc\.[0-9]+)?$ ]] || {
+    echo "error: release manifest has an invalid runtime_version" >&2
+    exit 1
+  }
+fi
+
 CONTROL_IMAGE="ghcr.io/lazarus-ai-research/sovereign-control:$VERSION"
 DOCKER_PROXY_IMAGE="ghcr.io/lazarus-ai-research/sovereign-docker-proxy:$VERSION"
 EVALS_IMAGE="ghcr.io/lazarus-ai-research/sovereign-evals:$VERSION"
@@ -125,18 +137,16 @@ WORKSPACE_IMAGE="ghcr.io/lazarus-ai-research/sovereign-workspace:$VERSION"
 EMBEDDINGS_IMAGE=""
 if [[ "$PROFILE" == "metal-arm64" ]]; then
   EMBEDDINGS_BASE_URL="http://host.docker.internal:42666/v1"
-  RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-$VERSION"
+  RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:metal-arm64-$RUNTIME_VERSION"
 else
   EMBEDDINGS_BASE_URL="http://sovereign-embeddings:42666/v1"
   EMBEDDINGS_IMAGE="ghcr.io/lazarus-ai-research/sovereign-embeddings:$VERSION"
-  RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-$VERSION"
+  RUNTIME_IMAGE="ghcr.io/lazarus-ai-research/sovereign-runtime:cuda-x86_64-$RUNTIME_VERSION"
 fi
 EMBEDDING_ALIAS="embedding-gemma-default"
 PASSAGE_PREFIX="title: none | text: "
 QUERY_PREFIX="task: search result | query: "
 
-MANIFEST_FILE="$RELEASE_ROOT/release/manifest.json"
-IMAGE_LOCK_FILE="$RELEASE_ROOT/release/images.env"
 locked_image() {
   local key="$1" expected="$2" value digest
   value="$(sed -n "s/^${key}=//p" "$IMAGE_LOCK_FILE" | tail -n 1)"

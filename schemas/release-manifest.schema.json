@@ -9,6 +9,7 @@
     "schema_version": { "const": "1.0" },
     "version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
     "stack_commit": { "$ref": "#/$defs/commit" },
+    "runtime_version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
     "runtime_commit": { "$ref": "#/$defs/commit" },
     "created_at": { "type": "string", "format": "date-time" },
     "supported_profiles": {
