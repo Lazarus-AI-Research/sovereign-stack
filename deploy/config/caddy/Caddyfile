@@ -2,6 +2,11 @@
 # address: loopback, private LAN HTTP, or a public domain with automatic TLS.
 {$SOVEREIGN_SITE_ADDRESS::80} {
 	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 
 	route {
 		# Control owns the appliance API and portal shell.
@@ -62,6 +67,7 @@
 		redir /control/* / 308
 
 		handle {
+			header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; frame-src 'self'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; worker-src 'self' blob:; media-src 'self' blob:"
 			reverse_proxy sovereign-control:8080
 		}
 	}

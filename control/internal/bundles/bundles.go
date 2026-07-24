@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 )
 
 type Artifact struct {
@@ -196,6 +197,8 @@ func fileArtifact(path string) (Artifact, error) {
 }
 
 func (d *Deps) HandleCreate(ctx context.Context, raw json.RawMessage) (any, error) {
+	total := int64(6)
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "preparing", Message: "Preparing offline bundle", Current: 0, Total: &total, Unit: "steps"})
 	var request CreatePayload
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &request); err != nil {
@@ -232,7 +235,9 @@ func (d *Deps) HandleCreate(ctx context.Context, raw json.RawMessage) (any, erro
 	if err := archivePaths(filepath.Join(stage, "release.tar.gz"), d.ReleaseRoot, []string{"."}); err != nil {
 		return nil, fmt.Errorf("release archive: %w", err)
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "archiving_release", Message: "Release files archived", Current: 1, Total: &total, Unit: "steps"})
 	imagesPath := filepath.Join(stage, "images.tar")
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "exporting_images", Message: "Exporting container images", Current: 2, Total: &total, Unit: "steps"})
 	if err := d.Proxy.ExportImages(ctx, d.Images, imagesPath); err != nil {
 		return nil, err
 	}
@@ -250,6 +255,7 @@ func (d *Deps) HandleCreate(ctx context.Context, raw json.RawMessage) (any, erro
 		}
 	}
 	if len(request.IncludeModels) > 0 {
+		_ = jobs.Report(ctx, jobs.Progress{Stage: "archiving_models", Message: "Archiving model weights", Current: 3, Total: &total, Unit: "steps"})
 		paths, err := modelPaths(d.Profile, request.IncludeModels)
 		if err != nil {
 			return nil, err
@@ -269,6 +275,7 @@ func (d *Deps) HandleCreate(ctx context.Context, raw json.RawMessage) (any, erro
 			manifest.Models = append(manifest.Models, modelArtifact)
 		}
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "checksumming", Message: "Checksumming bundle contents", Current: 4, Total: &total, Unit: "steps"})
 
 	imagesArtifact, err := fileArtifact(imagesPath)
 	if err != nil {
@@ -320,6 +327,7 @@ func (d *Deps) HandleCreate(ctx context.Context, raw json.RawMessage) (any, erro
 	}
 
 	archive := filepath.Join(bundleRoot, id+".tar.gz")
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "packaging", Message: "Creating final bundle", Current: 5, Total: &total, Unit: "steps"})
 	if err := archivePaths(archive, stage, []string{"."}); err != nil {
 		return nil, err
 	}
@@ -330,6 +338,7 @@ func (d *Deps) HandleCreate(ctx context.Context, raw json.RawMessage) (any, erro
 	if err != nil {
 		return nil, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Offline bundle complete", Current: 6, Total: &total, Unit: "steps"})
 	return map[string]any{"bundle_id": id, "archive": filepath.Base(archive), "bytes": bytes}, nil
 }
 

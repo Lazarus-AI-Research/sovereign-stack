@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
 )
 
@@ -46,6 +47,8 @@ func (d LoadDeps) HandleLoad(ctx context.Context, payload json.RawMessage) (any,
 // become ready, both the managed configuration and the prior runtime are
 // restored before the error is returned.
 func (d LoadDeps) Load(ctx context.Context, request LoadPayload) (any, error) {
+	total := int64(4)
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "resolving", Message: "Resolving model configuration", Current: 0, Total: &total, Unit: "steps"})
 	entry, err := d.Registry.Get(request.ModelID)
 	if err != nil {
 		return nil, err
@@ -57,16 +60,20 @@ func (d LoadDeps) Load(ctx context.Context, request LoadPayload) (any, error) {
 	if err := d.rewriteRole(entry, request); err != nil {
 		return nil, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "configuring", Message: "Applying model configuration", Current: 1, Total: &total, Unit: "steps"})
 	if err := d.Proxy.Restart(ctx, "sovereign-runtime"); err != nil {
 		if rollbackErr := d.rollback(previous); rollbackErr != nil {
 			return nil, fmt.Errorf("runtime restart: %w; rollback: %v", err, rollbackErr)
 		}
 		return nil, fmt.Errorf("runtime restart: %w", err)
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "loading", Message: "Downloading and loading model", Current: 2, Total: &total, Unit: "steps"})
 	result, err := d.waitReady(ctx, entry)
 	if err == nil {
+		_ = jobs.Report(ctx, jobs.Progress{Stage: "validating", Message: "Model is ready", Current: 4, Total: &total, Unit: "steps"})
 		return result, nil
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "rolling_back", Message: "Restoring the previous working model", Current: 3, Total: &total, Unit: "steps"})
 	if rollbackErr := d.rollback(previous); rollbackErr != nil {
 		return result, fmt.Errorf("%w; rollback: %v", err, rollbackErr)
 	}

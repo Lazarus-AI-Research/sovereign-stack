@@ -10,6 +10,12 @@ Docker, or operating-system packages.
 
 ## One-command install
 
+Tagged releases also publish a notarized Apple Silicon `.pkg` and an Ubuntu
+AMD64 `.deb`. Opening either package installs a small native bootstrap and
+starts the same signed, version-pinned installation in the background; the
+portal opens as soon as the control plane is ready. Native packages are also
+Sigstore-signed and accompanied by SHA-256 files on the release page.
+
 For the stable release:
 
 ```bash
@@ -26,19 +32,23 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
 owner-only appliance secrets, pulls digest-pinned images from the signed
-release manifest, starts the portal, opens the first-admin claim page, then
-waits for the generation runtime and embedding service and runs the smoke suite. A Hugging Face token is only needed
+release manifest, starts the portal, opens guided first-run setup, then
+provisions the generation runtime and embedding service while **Activity**
+reports progress. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.
 
 The appliance is installed under `~/.sovereign`; the management command is
 placed at `~/.local/bin/sovereign`. Add that directory to `PATH` if needed.
-The default portal is `http://127.0.0.1:8880/`. Run `sovereign open` instead of
-memorizing it. The first user chooses the administrator username and password
+The installer opens the correct portal URL automatically on a desktop. Over
+SSH it defaults to a detected private-LAN address and prints that address (and
+a QR code when available), so `127.0.0.1` is never presented as the primary
+remote result. The first user chooses the administrator username and password
 through a single-use, 30-minute setup link; `sovereign admin setup-link`
-replaces an expired link.
+remains a recovery path for an expired link.
 
-To use the portal from other devices:
+Network access is normally changed inside **Network Access** in the portal.
+The compatible recovery commands remain:
 
 ```bash
 sovereign access lan                       # trusted RFC1918 network

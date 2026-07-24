@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 )
 
 // ActivateDeps executes the "profile-activate" job. embeddinggemma is a
@@ -22,6 +24,8 @@ type ActivatePayload struct {
 }
 
 func (d ActivateDeps) HandleActivate(ctx context.Context, payload json.RawMessage) (any, error) {
+	total := int64(2)
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "resolving", Message: "Resolving embedding provider", Current: 0, Total: &total, Unit: "steps"})
 	var request ActivatePayload
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, fmt.Errorf("bad payload: %w", err)
@@ -37,10 +41,12 @@ func (d ActivateDeps) HandleActivate(ctx context.Context, payload json.RawMessag
 	if provider == nil {
 		return nil, fmt.Errorf("embedding provider %q is unavailable", profile.Provider)
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "validating", Message: "Testing embedding inference", Current: 1, Total: &total, Unit: "steps"})
 	dimensions, err := provider.Probe(ctx, profile.ServedModelName)
 	if err != nil {
 		return map[string]any{"state": "unhealthy", "profile": request.ProfileID}, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "ready", Message: "Embedding provider is ready", Current: 2, Total: &total, Unit: "steps"})
 	return map[string]any{
 		"state":      "healthy",
 		"profile":    request.ProfileID,

@@ -1,0 +1,26 @@
+#!/bin/bash
+set -eu
+
+PACKAGE_ROOT=/usr/local/share/sovereign-stack
+VERSION="$(cat "$PACKAGE_ROOT/VERSION")"
+INSTALL_USER="${SUDO_USER:-}"
+if [ -z "$INSTALL_USER" ] || [ "$INSTALL_USER" = root ]; then
+  INSTALL_USER="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1; exit}')"
+fi
+if [ -z "$INSTALL_USER" ]; then
+  echo "No appliance owner was found; run /usr/local/bin/sovereign-install as the intended user." >&2
+  exit 0
+fi
+INSTALL_HOME="$(getent passwd "$INSTALL_USER" | cut -d: -f6)"
+LOG_DIR="$INSTALL_HOME/.local/state/sovereign-stack"
+install -d -m 700 -o "$INSTALL_USER" -g "$(id -gn "$INSTALL_USER")" "$LOG_DIR"
+install -m 600 -o "$INSTALL_USER" -g "$(id -gn "$INSTALL_USER")" /dev/null "$LOG_DIR/install.log"
+loginctl enable-linger "$INSTALL_USER" >/dev/null 2>&1 || true
+
+runuser -u "$INSTALL_USER" -- env \
+  HOME="$INSTALL_HOME" \
+  SOVEREIGN_VERSION="$VERSION" \
+  SOVEREIGN_ACCESS_MODE=desktop \
+  /usr/bin/nohup /bin/bash "$PACKAGE_ROOT/install.sh" \
+  >>"$LOG_DIR/install.log" 2>&1 &
+exit 0

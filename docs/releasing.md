@@ -27,8 +27,12 @@ before it creates the appliance archive.
 4. Tag and push SovereignStack as `v<version>`.
 5. Confirm the workflow vendors the checksum-pinned EmbeddingGemma Metal
    executable, then wait for signed multi-architecture first-party images,
-   SBOM/provenance attestations, the signed release manifest, and the signed
-   appliance archive.
+   SBOM/provenance attestations, the signed release manifest, the signed
+   appliance archive, the notarized/stapled Apple Silicon package, and the
+   Ubuntu package with detached Sigstore bundles. The release environment must
+   provide the Developer ID Installer P12/identity and Apple notarization
+   credentials named in `.github/workflows/release.yml`; a tag fails closed
+   when they are missing.
 6. Install from the public one-command URL on clean certified Mac and CUDA
    hosts; run `sovereign status`, `sovereign smoke`, and `sovereign backup`.
 7. Build and install one same-platform offline bundle before announcing.

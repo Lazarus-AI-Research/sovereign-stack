@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,10 +28,13 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/gateway"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/hardware"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/hostagent"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/indexes"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/support"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/updates"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 	"github.com/jackc/pgx/v5"
 )
@@ -86,8 +90,13 @@ type Server struct {
 	Backups *backups.Deps
 	// Bundles enables same-platform offline bundle creation and download.
 	Bundles *bundles.Deps
+	// Support creates downloadable, secret-redacted diagnostic bundles.
+	Support *support.Deps
+	Updates *updates.Checker
 	// Workspace enables §18.9 (branding apply, status).
 	Workspace *workspace.Client
+	// HostLifecycle is the optional, narrowly allowlisted host management API.
+	HostLifecycle *hostagent.LifecycleClient
 	// SovereignRoot is the deploy mount (branding asset paths root here).
 	SovereignRoot string
 }
@@ -138,7 +147,7 @@ func adminOnlyPath(path string) bool {
 		BasePath + "/auth/setup-claim",
 		BasePath + "/users", BasePath + "/invitations", BasePath + "/provider-credentials",
 		BasePath + "/backups", BasePath + "/bundles", BasePath + "/branding",
-		BasePath + "/features", BasePath + "/runtime/restart",
+		BasePath + "/support-bundles", BasePath + "/updates", BasePath + "/features", BasePath + "/runtime/restart", BasePath + "/network", BasePath + "/repair",
 	} {
 		if strings.HasPrefix(path, prefix) {
 			return true
@@ -150,6 +159,7 @@ func adminOnlyPath(path string) bool {
 func memberPath(path string) bool {
 	for _, prefix := range []string{
 		BasePath + "/auth/", BasePath + "/status", BasePath + "/theme",
+		BasePath + "/readiness", BasePath + "/applications",
 		BasePath + "/workspace/sso", BasePath + "/workspaces",
 	} {
 		if strings.HasPrefix(path, prefix) {
@@ -182,7 +192,55 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 func errorJSON(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	code, action := "operation_failed", "Review the details and try again."
+	switch status {
+	case http.StatusBadRequest:
+		code, action = "invalid_request", "Check the highlighted values and try again."
+	case http.StatusUnauthorized:
+		code, action = "not_authenticated", "Sign in and try again."
+	case http.StatusForbidden:
+		code, action = "not_authorized", "Ask an appliance administrator for access."
+	case http.StatusNotFound:
+		code, action = "not_found", "Refresh the page; the item may have been removed."
+	case http.StatusConflict:
+		code, action = "conflict", "Refresh the current state and try again."
+	case http.StatusUnprocessableEntity:
+		code, action = "incompatible_configuration", "Choose a compatible configuration or open Advanced settings."
+	case http.StatusBadGateway, http.StatusServiceUnavailable:
+		code, action = "dependency_unavailable", "Open System status, then retry when the service is ready."
+	case http.StatusGatewayTimeout, http.StatusRequestTimeout:
+		code, action = "operation_timed_out", "Retry the operation. If it repeats, download diagnostics from System."
+	}
+	writeJSON(w, status, map[string]string{"error": message, "code": code, "action": action})
+}
+
+func redactMemberJob(job *jobs.Job) {
+	job.Payload = nil
+	job.Result = nil
+	if job.Error != nil {
+		message := "Operation needs attention"
+		job.Error = nil
+		job.Message = &message
+	}
+}
+
+func catalogCompatibility(item models.CatalogItem, inventory hardware.Inventory) (bool, string) {
+	if !slices.Contains(item.CompatibleProfiles, inventory.Profile) {
+		return false, "Requires a supported " + strings.Join(item.CompatibleProfiles, " or ") + " hardware profile."
+	}
+	if item.MinimumMemoryBytes > 0 && inventory.MemoryBytes > 0 && inventory.MemoryBytes < item.MinimumMemoryBytes {
+		return false, fmt.Sprintf("Requires at least %.0f GB of system memory.", float64(item.MinimumMemoryBytes)/(1024*1024*1024))
+	}
+	if item.MinimumVRAMBytes > 0 && inventory.GPU != nil && inventory.GPU.VRAMBytes > 0 && inventory.GPU.VRAMBytes < item.MinimumVRAMBytes {
+		return false, fmt.Sprintf("Requires at least %.0f GB of GPU memory.", float64(item.MinimumVRAMBytes)/(1024*1024*1024))
+	}
+	// Keep enough headroom for verification, extraction, and rollback. Unknown
+	// capacity is not rejected because older installations do not report it.
+	requiredDisk := item.DownloadBytes + max(item.DownloadBytes/5, int64(2*1024*1024*1024))
+	if inventory.StorageFreeBytes > 0 && inventory.StorageFreeBytes < requiredDisk {
+		return false, fmt.Sprintf("Free at least %.1f GB of disk space before installing.", float64(requiredDisk)/(1024*1024*1024))
+	}
+	return true, "Compatible with this appliance."
 }
 
 func metricValue(ok bool) int {
@@ -538,10 +596,268 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, status)
 	})
 
+	// Readiness is the stable, user-facing view of appliance startup. Unlike
+	// /status it describes independent product capabilities so optional tools
+	// never block Chat or make the whole portal look unavailable.
+	mux.HandleFunc("GET "+p("/readiness"), func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		defer cancel()
+		type component struct {
+			State           string  `json:"state"`
+			Message         string  `json:"message"`
+			JobID           string  `json:"job_id,omitempty"`
+			Action          string  `json:"action,omitempty"`
+			ProgressCurrent int64   `json:"progress_current,omitempty"`
+			ProgressTotal   int64   `json:"progress_total,omitempty"`
+			ProgressUnit    string  `json:"progress_unit,omitempty"`
+			RateBytes       float64 `json:"rate_bytes,omitempty"`
+			ETASeconds      int64   `json:"eta_seconds,omitempty"`
+		}
+		components := map[string]component{
+			"portal": {State: "ready", Message: "Control portal is ready"},
+		}
+		authentication := component{State: "starting", Message: "Authentication is starting"}
+		if s.Auth != nil {
+			authentication = component{State: "ready", Message: "Authentication is ready"}
+		}
+		generation := component{State: "starting", Message: "Generation runtime is starting"}
+		if s.Runtime != nil {
+			if ready, err := s.Runtime.Ready(ctx); err == nil && ready.Ready {
+				generation = component{State: "ready", Message: "Generation model is ready"}
+			} else if err == nil && ready.State != "" {
+				generation.State, generation.Message = ready.State, "Generation runtime is "+strings.ReplaceAll(ready.State, "_", " ")
+			}
+		}
+		embedding := component{State: "starting", Message: "EmbeddingGemma is starting"}
+		if s.Embeddings != nil && s.Embeddings.Healthy(ctx) {
+			embedding = component{State: "ready", Message: "EmbeddingGemma is ready"}
+		}
+		gatewayComponent := component{State: "starting", Message: "API gateway is starting"}
+		if s.Gateway != nil && s.Gateway.Healthy(ctx) {
+			gatewayComponent = component{State: "ready", Message: "API gateway is ready"}
+		}
+		workspaceComponent := component{State: "starting", Message: "Chat workspace is starting"}
+		if s.Workspace != nil && s.Workspace.Reachable(ctx) {
+			workspaceComponent = component{State: "ready", Message: "Chat workspace is ready"}
+		}
+		observability := component{State: "starting", Message: "Optional observability tools are starting"}
+		if s.Proxy != nil {
+			if containers, err := s.Proxy.Containers(ctx); err == nil {
+				states := map[string]string{}
+				for _, container := range containers {
+					states[container.Labels["com.docker.compose.service"]] = container.State
+				}
+				if states["grafana"] == "running" && states["phoenix"] == "running" {
+					observability = component{State: "ready", Message: "Grafana and Phoenix are ready"}
+				} else {
+					observability = component{State: "degraded", Message: "Chat is available while optional tools start"}
+				}
+			}
+		}
+		if s.Jobs != nil {
+			if recent, err := s.Jobs.List(ctx, 25); err == nil {
+				for _, job := range recent {
+					if job.Status != "queued" && job.Status != "running" {
+						continue
+					}
+					if job.Kind == "model-load" {
+						generation.State, generation.JobID = job.Stage, job.ID
+						generation.ProgressCurrent = job.ProgressCurrent
+						if job.ProgressTotal != nil {
+							generation.ProgressTotal = *job.ProgressTotal
+						}
+						if job.ProgressUnit != nil {
+							generation.ProgressUnit = *job.ProgressUnit
+						}
+						if job.ProgressRate != nil {
+							generation.RateBytes = float64(*job.ProgressRate)
+						}
+						if job.ETASeconds != nil {
+							generation.ETASeconds = *job.ETASeconds
+						}
+						if job.Message != nil {
+							generation.Message = *job.Message
+						}
+					}
+					if job.Kind == "profile-activate" {
+						embedding.State, embedding.JobID = job.Stage, job.ID
+						embedding.ProgressCurrent = job.ProgressCurrent
+						if job.ProgressTotal != nil {
+							embedding.ProgressTotal = *job.ProgressTotal
+						}
+						if job.ProgressUnit != nil {
+							embedding.ProgressUnit = *job.ProgressUnit
+						}
+						if job.Message != nil {
+							embedding.Message = *job.Message
+						}
+					}
+				}
+			}
+		}
+		var installProgress struct {
+			Role        string `json:"role"`
+			Stage       string `json:"stage"`
+			File        string `json:"file"`
+			Current     int64  `json:"current"`
+			Total       int64  `json:"total"`
+			StartedUnix int64  `json:"started_unix"`
+		}
+		if raw, err := os.ReadFile(filepath.Join(s.SovereignRoot, "state", "install-progress.json")); err == nil && json.Unmarshal(raw, &installProgress) == nil && installProgress.Stage != "complete" {
+			elapsed := time.Now().Unix() - installProgress.StartedUnix
+			rate, eta := float64(0), int64(0)
+			if elapsed > 0 {
+				rate = float64(installProgress.Current) / float64(elapsed)
+				if rate > 0 && installProgress.Total > installProgress.Current {
+					eta = int64(float64(installProgress.Total-installProgress.Current) / rate)
+				}
+			}
+			target := generation
+			if installProgress.Role == "embeddings" {
+				target = embedding
+			}
+			target.State, target.Message = installProgress.Stage, "Downloading "+installProgress.File
+			target.ProgressCurrent, target.ProgressTotal, target.ProgressUnit = installProgress.Current, installProgress.Total, "bytes"
+			target.RateBytes, target.ETASeconds = rate, eta
+			if installProgress.Role == "embeddings" {
+				embedding = target
+			} else {
+				generation = target
+			}
+		}
+		components["generation"] = generation
+		components["embeddings"] = embedding
+		components["gateway"] = gatewayComponent
+		components["workspace"] = workspaceComponent
+		components["authentication"] = authentication
+		components["observability"] = observability
+		overall := "ready"
+		for _, name := range []string{"authentication", "generation", "embeddings", "gateway", "workspace"} {
+			if components[name].State == "failed" || components[name].State == "degraded" {
+				overall = "degraded"
+				break
+			}
+			if components[name].State != "ready" {
+				overall = "starting"
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"overall": overall, "components": components})
+	})
+
+	// Applications are registered centrally so the portal owns service names,
+	// paths, roles, and embed behavior. No arbitrary iframe URLs are accepted.
+	mux.HandleFunc("GET "+p("/applications"), func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := requestIdentity(r)
+		level := map[string]int{"member": 0, "manager": 1, "admin": 2}[identity.Role]
+		applications := []map[string]any{
+			{"id": "chat", "label": "Chat", "icon": "chat", "path": "/api/control/v1/workspace/sso", "health_component": "workspace", "minimum_role": "member", "embed": true},
+			{"id": "grafana", "label": "Grafana", "icon": "metrics", "description": "Metrics and operational dashboards", "path": "/apps/grafana/", "health_component": "observability", "minimum_role": "manager", "embed": true},
+			{"id": "phoenix", "label": "Phoenix", "icon": "traces", "description": "AI traces and evaluations", "path": "/apps/phoenix/", "health_component": "observability", "minimum_role": "manager", "embed": true},
+			{"id": "api-providers", "label": "API & Providers", "icon": "connections", "description": "Connect providers and issue scoped API keys", "path": "/admin/providers", "health_component": "gateway", "minimum_role": "admin", "embed": false},
+		}
+		filtered := make([]map[string]any, 0, len(applications))
+		for _, app := range applications {
+			minimum := app["minimum_role"].(string)
+			if level >= map[string]int{"member": 0, "manager": 1, "admin": 2}[minimum] {
+				filtered = append(filtered, app)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"applications": filtered})
+	})
+
+	// Host mutations use sovereign-hostd's fixed operation allowlist. Upgraded
+	// installations without hostd keep a read-only status and CLI fallback.
+	mux.HandleFunc("GET "+p("/network"), func(w http.ResponseWriter, r *http.Request) {
+		fallback := hostagent.HostStatus{
+			Managed: false, AccessMode: os.Getenv("SOVEREIGN_ACCESS_MODE"), PublicURL: os.Getenv("SOVEREIGN_PUBLIC_URL"),
+			BindAddress: os.Getenv("SOVEREIGN_BIND_ADDRESS"), SiteAddress: os.Getenv("SOVEREIGN_SITE_ADDRESS"), Version: s.Version,
+		}
+		if s.HostLifecycle == nil {
+			writeJSON(w, http.StatusOK, fallback)
+			return
+		}
+		status, err := s.HostLifecycle.Status(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusOK, fallback)
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	})
+	mux.HandleFunc("PUT "+p("/network"), func(w http.ResponseWriter, r *http.Request) {
+		if s.HostLifecycle == nil {
+			errorJSON(w, http.StatusServiceUnavailable, "the signed host lifecycle service is not installed")
+			return
+		}
+		var request struct {
+			Mode   string `json:"mode"`
+			Target string `json:"target"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil {
+			errorJSON(w, http.StatusBadRequest, "invalid network request")
+			return
+		}
+		if err := s.HostLifecycle.SetNetwork(r.Context(), request.Mode, request.Target); err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"updating": true, "mode": request.Mode, "target": request.Target})
+	})
+	mux.HandleFunc("POST "+p("/repair"), func(w http.ResponseWriter, r *http.Request) {
+		if s.HostLifecycle == nil {
+			errorJSON(w, http.StatusServiceUnavailable, "the signed host lifecycle service is not installed")
+			return
+		}
+		if err := s.HostLifecycle.Repair(r.Context()); err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"repaired": true})
+	})
+	mux.HandleFunc("GET "+p("/updates"), func(w http.ResponseWriter, r *http.Request) {
+		info := updates.Info{CurrentVersion: s.Version, CheckedAt: time.Now().UTC().Format(time.RFC3339), CheckError: "release checking is not configured"}
+		if s.Updates != nil {
+			info = s.Updates.Check(r.Context(), s.Version)
+		}
+		state := hostagent.UpdateState{State: "unavailable", Message: "Install the host lifecycle service to apply updates"}
+		if s.HostLifecycle != nil {
+			if current, err := s.HostLifecycle.UpdateStatus(r.Context()); err == nil {
+				state = current
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"release": info, "operation": state})
+	})
+	mux.HandleFunc("POST "+p("/updates/apply"), func(w http.ResponseWriter, r *http.Request) {
+		if s.Updates == nil || s.HostLifecycle == nil {
+			errorJSON(w, http.StatusServiceUnavailable, "managed updates are not configured")
+			return
+		}
+		var request struct {
+			Version string `json:"version"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		info := s.Updates.Check(r.Context(), s.Version)
+		if info.CheckError != "" {
+			errorJSON(w, http.StatusServiceUnavailable, info.CheckError)
+			return
+		}
+		if request.Version == "" {
+			request.Version = info.LatestVersion
+		}
+		if !info.Available || request.Version != info.LatestVersion {
+			errorJSON(w, http.StatusConflict, "the requested version is not the current verified release-feed update")
+			return
+		}
+		if err := s.HostLifecycle.ApplyUpdate(r.Context(), request.Version); err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"scheduled": true, "version": request.Version})
+	})
+
 	// ── §18.2 hardware ───────────────────────────────────────────────────
 
 	detect := func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"detections": hardware.Detect()})
+		writeJSON(w, http.StatusOK, hardware.GetInventory())
 	}
 	mux.HandleFunc("POST "+p("/hardware/detect"), detect)
 	mux.HandleFunc("GET "+p("/hardware"), detect)
@@ -601,6 +917,74 @@ func (s *Server) Handler() http.Handler {
 	// ── §18.5 models ─────────────────────────────────────────────────────
 
 	if s.Models != nil {
+		mux.HandleFunc("GET "+p("/model-catalog"), func(w http.ResponseWriter, r *http.Request) {
+			inventory := hardware.GetInventory()
+			registered, err := s.Models.List()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, "model catalog is temporarily unavailable")
+				return
+			}
+			known := map[string]bool{}
+			for _, entry := range registered {
+				known[entry.ID] = true
+			}
+			items := make([]map[string]any, 0)
+			for _, entry := range models.Catalog(inventory.Profile) {
+				raw, _ := json.Marshal(entry)
+				var item map[string]any
+				_ = json.Unmarshal(raw, &item)
+				compatible, reason := catalogCompatibility(entry, inventory)
+				item["registered"] = known[entry.ID]
+				item["compatible"] = compatible
+				item["compatibility_reason"] = reason
+				items = append(items, item)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"catalog_version": models.CatalogVersion, "profile": inventory.Profile, "models": items,
+			})
+		})
+		if s.Jobs != nil {
+			mux.HandleFunc("POST "+p("/model-catalog/{id}/install"), func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Activate *bool `json:"activate"`
+				}
+				if r.Body != nil {
+					_ = json.NewDecoder(r.Body).Decode(&request)
+				}
+				profile := hardware.GetInventory().Profile
+				item, err := models.CatalogEntry(profile, r.PathValue("id"))
+				if err != nil {
+					errorJSON(w, http.StatusNotFound, err.Error())
+					return
+				}
+				if compatible, reason := catalogCompatibility(item, hardware.GetInventory()); !compatible {
+					errorJSON(w, http.StatusUnprocessableEntity, reason)
+					return
+				}
+				_, registryErr := s.Models.Get(item.ID)
+				registered := registryErr == nil
+				if !registered {
+					if err := s.Models.Add(item.RegistryEntry); err != nil {
+						errorJSON(w, http.StatusBadRequest, err.Error())
+						return
+					}
+				}
+				if item.Role == "embedding" {
+					writeJSON(w, http.StatusAccepted, map[string]any{"model_id": item.ID, "managed_by": "embeddinggemma", "ready": s.Embeddings != nil && s.Embeddings.Healthy(r.Context())})
+					return
+				}
+				if registered && request.Activate != nil && !*request.Activate {
+					writeJSON(w, http.StatusAccepted, map[string]any{"model_id": item.ID, "managed_by": "runtime", "ready": false})
+					return
+				}
+				jobID, err := s.Jobs.Enqueue(r.Context(), "model-load", models.LoadPayload{ModelID: item.ID})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID, "model_id": item.ID})
+			})
+		}
 		mux.HandleFunc("GET "+p("/models"), func(w http.ResponseWriter, r *http.Request) {
 			entries, err := s.Models.List()
 			if err != nil {
@@ -767,13 +1151,78 @@ func (s *Server) Handler() http.Handler {
 	// ── jobs ─────────────────────────────────────────────────────────────
 
 	if s.Jobs != nil {
+		mux.HandleFunc("GET "+p("/jobs"), func(w http.ResponseWriter, r *http.Request) {
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			items, err := s.Jobs.List(r.Context(), limit)
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, "activity is temporarily unavailable")
+				return
+			}
+			if identity, ok := requestIdentity(r); ok && identity.Role == "member" {
+				for index := range items {
+					redactMemberJob(&items[index])
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"jobs": items})
+		})
+		mux.HandleFunc("GET "+p("/jobs/events"), func(w http.ResponseWriter, r *http.Request) {
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				errorJSON(w, http.StatusNotImplemented, "activity streaming is unavailable")
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("X-Accel-Buffering", "no")
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				items, err := s.Jobs.List(r.Context(), 50)
+				if err != nil {
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", strconv.Quote("activity temporarily unavailable"))
+				} else {
+					if identity, ok := requestIdentity(r); ok && identity.Role == "member" {
+						for index := range items {
+							redactMemberJob(&items[index])
+						}
+					}
+					payload, _ := json.Marshal(map[string]any{"jobs": items})
+					fmt.Fprintf(w, "event: jobs\ndata: %s\n\n", payload)
+				}
+				flusher.Flush()
+				select {
+				case <-r.Context().Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		})
 		mux.HandleFunc("GET "+p("/jobs/{id}"), func(w http.ResponseWriter, r *http.Request) {
 			job, err := s.Jobs.Get(r.Context(), r.PathValue("id"))
 			if err != nil {
 				errorJSON(w, http.StatusNotFound, "job not found")
 				return
 			}
+			if identity, ok := requestIdentity(r); ok && identity.Role == "member" {
+				redactMemberJob(job)
+			}
 			writeJSON(w, http.StatusOK, job)
+		})
+		mux.HandleFunc("POST "+p("/jobs/{id}/cancel"), func(w http.ResponseWriter, r *http.Request) {
+			job, err := s.Jobs.Cancel(r.Context(), r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+		})
+		mux.HandleFunc("POST "+p("/jobs/{id}/retry"), func(w http.ResponseWriter, r *http.Request) {
+			jobID, err := s.Jobs.Retry(r.Context(), r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusConflict, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
 		})
 	}
 
@@ -1401,6 +1850,37 @@ func (s *Server) Handler() http.Handler {
 		}
 	}
 
+	if s.Support != nil {
+		mux.HandleFunc("GET "+p("/support-bundles"), func(w http.ResponseWriter, r *http.Request) {
+			items, err := s.Support.List()
+			if err != nil {
+				errorJSON(w, http.StatusInternalServerError, "support bundles are unavailable")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"support_bundles": items})
+		})
+		mux.HandleFunc("GET "+p("/support-bundles/{id}/download"), func(w http.ResponseWriter, r *http.Request) {
+			path, err := s.Support.Path(r.PathValue("id"))
+			if err != nil {
+				errorJSON(w, http.StatusNotFound, "support bundle not found")
+				return
+			}
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(path)))
+			w.Header().Set("Content-Type", "application/gzip")
+			http.ServeFile(w, r, path)
+		})
+		if s.Jobs != nil {
+			mux.HandleFunc("POST "+p("/support-bundles"), func(w http.ResponseWriter, r *http.Request) {
+				jobID, err := s.Jobs.Enqueue(r.Context(), "support-bundle", map[string]string{})
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+			})
+		}
+	}
+
 	// ── §18.9 workspace ──────────────────────────────────────────────────
 
 	if s.Workspace != nil {
@@ -1614,7 +2094,9 @@ func (s *Server) Handler() http.Handler {
 					return
 				}
 			}
-			if identity.Role == "member" && !memberPath(r.URL.Path) {
+			memberAllowed := memberPath(r.URL.Path) ||
+				(r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, BasePath+"/jobs"))
+			if identity.Role == "member" && !memberAllowed {
 				errorJSON(w, http.StatusForbidden, "member role cannot access this control-plane operation")
 				return
 			}
@@ -1622,7 +2104,9 @@ func (s *Server) Handler() http.Handler {
 				errorJSON(w, http.StatusForbidden, "administrator role required")
 				return
 			}
-			r = r.WithContext(context.WithValue(r.Context(), identityContextKey{}, identity))
+			requestContext := context.WithValue(r.Context(), identityContextKey{}, identity)
+			requestContext = jobs.WithInitiator(requestContext, identity.ID)
+			r = r.WithContext(requestContext)
 		}
 		mux.ServeHTTP(w, r)
 	})

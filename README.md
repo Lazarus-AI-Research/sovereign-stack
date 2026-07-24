@@ -43,6 +43,10 @@ See [hardware profiles](docs/hardware-profiles.md) for the exact support matrix.
 
 ## Install
 
+Tagged releases provide a notarized Apple Silicon `.pkg` and an Ubuntu AMD64
+`.deb` for a native one-click install. The signed shell path below remains the
+supported choice for headless servers and automation.
+
 Run the same command on a supported Mac or CUDA host. The installer detects the
 profile, verifies the signed release, generates appliance secrets, pulls the
 exact digest-pinned images, and starts the portal immediately while models
@@ -55,8 +59,9 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 ```
 
 The first run can take a while because it downloads a pinned signature verifier,
-container images, and model weights. Leave the installer running until it
-prints the portal URL. Set `HF_TOKEN` in the installer
+container images, and model weights. The portal opens as soon as its core
+services are ready; downloads and model loading remain visible under
+**Activity** while installation finishes. Set `HF_TOKEN` in the installer
 environment before running the command only when a configured model repository
 requires authentication.
 
@@ -70,6 +75,24 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 # Ubuntu NVIDIA CUDA
 curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
   | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --profile cuda-x86_64
+```
+
+When installing over SSH, the installer selects private-LAN access and prints
+one reachable portal URL (plus a QR code when `qrencode` is installed). You can
+also choose access explicitly:
+
+```bash
+# Local desktop
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --access desktop
+
+# Headless/private network
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --access lan
+
+# Public domain with automatic HTTPS
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --domain ai.example.com
 ```
 
 The default install locations are:
@@ -89,40 +112,32 @@ offline installation are documented in [installation](docs/installation.md).
 
 ## First use
 
-Add the CLI to `PATH` if your shell does not already include `~/.local/bin`:
+The installer opens the single Sovereign Portal. On a headless host, open the
+one URL printed by the installer. The first browser session walks through:
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+1. Creating the first administrator (there is no default password).
+2. Choosing local-only or private-network access.
+3. Reviewing the detected hardware and recommended model.
+4. Watching provisioning progress and opening Chat.
 
-Confirm the installed release and health:
+Chat, Activity, Grafana, Phoenix, models, embeddings, provider connections,
+people, backups, updates, repair, and diagnostics all remain inside that portal.
+Normal operation does not require Docker commands, container access, or
+memorized service ports.
 
-```bash
-sovereign version
-sovereign validate
-sovereign status
-```
-
-Open the single portal. Chat, embeddings, Grafana, Phoenix, models, keys,
-backups, and people are available from its navigation:
-
-```bash
-sovereign open
-```
-
-The first browser session displays a one-time administrator claim form. The
-link expires after 30 minutes; create a fresh one with
-`sovereign admin setup-link`. There is no generated default password.
+The `sovereign` CLI remains available for automation and recovery. If a setup
+link expires before the first administrator is created, run
+`sovereign admin setup-link` on the host to issue another 30-minute link.
 
 The shipped local models and privacy-preserving observability defaults are
 ready to use without a provider key. The next section explains how to keep
 those defaults or deliberately change them before adding production data.
 
-The portal binds to host loopback by default. Use `sovereign access lan` for a
-trusted private network, or `sovereign access domain ai.example.com` for
-automatic HTTPS. Public cleartext HTTP requires the deliberately long
-`--i-understand-this-is-insecure` acknowledgement. Internal service ports are
-never published.
+The portal binds to host loopback by default. Administrators can change this in
+**Network Access** without SSH; the compatible `sovereign access` commands
+remain available. Public cleartext HTTP still requires the deliberately long
+`--i-understand-this-is-insecure` CLI acknowledgement. Internal service ports
+are never published.
 
 ## Initial configuration
 
@@ -145,12 +160,14 @@ These defaults need no cloud account and are the recommended starting point.
 
 ### 1. Choose the generation model
 
-Open **Models** in the portal. The active local model is served to Workspace using
-the stable `assistant-large` route, even if its underlying checkpoint changes.
+Open **Models** in the portal. The recommended, hardware-compatible model is
+shown first and installs with one confirmation. The active local model is
+served to Workspace using the stable `assistant-large` route, even if its
+underlying checkpoint changes.
 
 To use another local Hugging Face, ModelScope, or local-path model:
 
-1. Select **Add model**.
+1. Select **Add custom model** to open Advanced configuration.
 2. Set **Role** to **Generation**, choose the source, and enter the model or
    repository. Catalog models should include an immutable commit revision.
 3. Save it, select **Load**, wait for the runtime to become ready, and then
@@ -163,7 +180,7 @@ needs to change. A gated Hugging Face repository also requires `HF_TOKEN` in
 
 To use a cloud or OpenAI-compatible remote model:
 
-1. Under **Access**, save the provider credential. The secret is
+1. Under **API & Providers**, save the provider credential. The secret is
    encrypted and is not returned after submission.
 2. Under **Models**, add a **Generation** model. Give it a short
    **Product ID**, such as `team-coding-model`; select the credential and set
@@ -270,18 +287,17 @@ use. Docker manages the physical location of named volumes; changing
 
 ### 4. Review the other common settings
 
-- **Portal access:** The desktop default is `http://127.0.0.1:8880`. Use
-  `sovereign open` locally, `sovereign access lan` on a trusted RFC1918
-  network, or `sovereign access domain ai.example.com` for automatic public
-  TLS. Public cleartext HTTP is rejected unless its explicit insecure
-  acknowledgement flag is supplied.
+- **Portal access:** Use **Network Access** to choose this computer, a trusted
+  private network, or a domain with automatic public TLS. The compatible
+  `sovereign access` commands remain available for recovery. Public cleartext
+  HTTP is rejected unless its explicit insecure acknowledgement flag is supplied.
 - **Context limit:** Workspace defaults to
   `GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT=2048`. Do not set it above the active
   route's supported context length. Runtime model length, memory allocation,
   and concurrency are hardware-specific advanced settings in
-  `~/.sovereign/config/runtime.yaml`; changing them requires **Overview >
+  `~/.sovereign/config/runtime.yaml`; changing them requires **System >
   Restart runtime** and the full evaluation gate.
-- **Provider access:** Store provider secrets under **Access**, not in
+- **Provider access:** Store provider secrets under **API & Providers**, not in
   model registry files. Issue scoped gateway keys rather than sharing the
   appliance master key.
 - **Branding:** Set the product name, company name, and colors under

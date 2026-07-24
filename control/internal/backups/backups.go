@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/dockerproxy"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 )
 
 type Deps struct {
@@ -50,7 +51,9 @@ func (d Deps) dir(id string) string { return filepath.Join(d.Root, "backups", id
 // ── create ───────────────────────────────────────────────────────────────
 
 func (d Deps) HandleBackup(ctx context.Context, _ json.RawMessage) (any, error) {
-	id := time.Now().UTC().Format("20060102-150405")
+	total := int64(4)
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "preparing", Message: "Preparing backup", Current: 0, Total: &total, Unit: "steps"})
+	id := time.Now().UTC().Format("20060102-150405.000000")
 	dir := d.dir(id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -59,18 +62,22 @@ func (d Deps) HandleBackup(ctx context.Context, _ json.RawMessage) (any, error) 
 	if err := d.archiveConfig(dir); err != nil {
 		return nil, fmt.Errorf("config archive: %w", err)
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "archiving", Message: "Configuration archived", Current: 1, Total: &total, Unit: "steps"})
 
 	if _, err := d.Proxy.RunBackup(ctx, "dump", id); err != nil {
 		return nil, fmt.Errorf("database dump: %w", err)
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "dumping", Message: "Exporting appliance databases", Current: 2, Total: &total, Unit: "steps"})
 	if err := d.waitForDumps(ctx, dir); err != nil {
 		return nil, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "verifying", Message: "Checksumming backup files", Current: 3, Total: &total, Unit: "steps"})
 
 	manifest, err := d.writeManifest(id, dir)
 	if err != nil {
 		return nil, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Backup complete", Current: 4, Total: &total, Unit: "steps"})
 	return map[string]any{"backup_id": id, "files": len(manifest.Files)}, nil
 }
 
@@ -261,6 +268,8 @@ type RestorePayload struct {
 // in-place (dumps apply onto the existing schema); a clean-slate restore is
 // documented in docs/backup-restore.md.
 func (d Deps) HandleRestore(ctx context.Context, payload json.RawMessage) (any, error) {
+	total := int64(5)
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "verifying", Message: "Verifying backup integrity", Current: 0, Total: &total, Unit: "steps"})
 	var request RestorePayload
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, err
@@ -273,13 +282,44 @@ func (d Deps) HandleRestore(ctx context.Context, payload json.RawMessage) (any, 
 		return nil, fmt.Errorf("backup %q failed verification: %v", request.BackupID, verification["problems"])
 	}
 
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "safety_backup", Message: "Creating a rollback point", Current: 1, Total: &total, Unit: "steps"})
+	snapshot, err := d.HandleBackup(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("pre-restore backup: %w", err)
+	}
+	snapshotResult, ok := snapshot.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("pre-restore backup returned an invalid recovery point")
+	}
+	rollbackID, _ := snapshotResult["backup_id"].(string)
+	if rollbackID == "" {
+		return nil, fmt.Errorf("pre-restore backup returned no recovery point")
+	}
+
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "restoring_config", Message: "Restoring appliance configuration", Current: 3, Total: &total, Unit: "steps"})
 	if err := d.unpackConfig(request.BackupID); err != nil {
-		return nil, fmt.Errorf("config restore: %w", err)
+		rollbackErr := d.restoreRollback(rollbackID)
+		return nil, fmt.Errorf("config restore: %w; rollback: %v", err, rollbackErr)
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "restoring_databases", Message: "Restoring appliance databases", Current: 4, Total: &total, Unit: "steps"})
 	if _, err := d.Proxy.RunBackup(ctx, "restore", request.BackupID); err != nil {
-		return nil, fmt.Errorf("database restore: %w", err)
+		rollbackErr := d.restoreRollback(rollbackID)
+		return nil, fmt.Errorf("database restore: %w; rollback: %v", err, rollbackErr)
 	}
-	return map[string]any{"backup_id": request.BackupID, "status": "restore started"}, nil
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Restore complete", Current: 5, Total: &total, Unit: "steps"})
+	return map[string]any{"backup_id": request.BackupID, "rollback_backup_id": rollbackID, "status": "restored"}, nil
+}
+
+func (d Deps) restoreRollback(id string) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := d.unpackConfig(id); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if _, err := d.Proxy.RunBackup(rollbackCtx, "restore", id); err != nil {
+		return fmt.Errorf("databases: %w", err)
+	}
+	return nil
 }
 
 func (d Deps) unpackConfig(id string) error {

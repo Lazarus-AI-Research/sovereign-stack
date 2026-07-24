@@ -43,6 +43,10 @@ if [[ -n "$OVERLAY" && -d "$CURRENT/deploy" && -f "$ENV_FILE" ]] && command -v d
   fi
 fi
 
+if [[ -x "$CURRENT/deploy/scripts/uninstall-hostd.sh" ]]; then
+  SOVEREIGN_HOME="$SOVEREIGN_HOME" "$CURRENT/deploy/scripts/uninstall-hostd.sh"
+fi
+
 if [[ "$PROFILE" == metal-arm64 ]]; then
   if [[ -x "$CURRENT/deploy/scripts/uninstall-embeddinggemma-metal.sh" ]]; then
     SOVEREIGN_HOME="$SOVEREIGN_HOME" "$CURRENT/deploy/scripts/uninstall-embeddinggemma-metal.sh"
@@ -65,7 +69,9 @@ if [[ "$PROFILE" == metal-arm64 ]]; then
   fi
 fi
 
-CLI="$HOME/.local/bin/sovereign"
+BIN_DIR="$HOME/.local/bin"
+[[ -s "$SOVEREIGN_HOME/state/bin-dir" ]] && BIN_DIR="$(<"$SOVEREIGN_HOME/state/bin-dir")"
+CLI="$BIN_DIR/sovereign"
 if [[ -f "$CLI" ]] && cmp -s "$CLI" "$CURRENT/deploy/scripts/sovereign" 2>/dev/null; then
   rm -f "$CLI"
 fi

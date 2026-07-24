@@ -15,6 +15,7 @@ AnythingLLM → LiteLLM gateway → Sovereign Runtime :8000 (generation)
 
 Sovereign Control → restricted Docker proxy → Docker socket
                   → runtime, embeddings, gateway, workspace, evals, backups, bundles
+                  → authenticated sovereign-hostd → allowlisted network/update/repair operations
 ```
 
 Caddy is the only host-published service. It defaults to loopback, supports a
@@ -26,6 +27,19 @@ generation and embedding requests to independent services. On CUDA,
 `embeddinggemma` is a private sibling container. On Apple Silicon it is a
 loopback-only, launchd-managed Metal process reached from Docker Desktop via
 `host.docker.internal`.
+
+The signed `sovereign-hostd` process is managed by launchd or a user systemd
+unit. It exposes a versioned bearer-authenticated API only to Control's host
+bridge path. The protocol accepts fixed network, repair, status, and signed
+update requests; it never accepts a shell command, filesystem path, Compose
+argument, or unrestricted Docker operation. Existing CLI commands remain the
+fallback for upgraded installations without hostd.
+
+Long operations use the PostgreSQL-backed job queue. Jobs report stages,
+progress, heartbeat, cancellation, retry, and actionable failures to the
+Activity Center over same-origin server-sent events. The portal and each
+runtime capability publish independent readiness so Chat navigation remains
+available while models or optional tools start.
 
 Persistent state lives in named Docker volumes and `~/.sovereign`. Release code
 is versioned under `releases/<version>` and selected through `current`; config,

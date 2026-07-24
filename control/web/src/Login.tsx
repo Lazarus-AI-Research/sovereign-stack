@@ -17,7 +17,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 401
-          ? "Invalid credentials"
+          ? "That username or password is not correct."
           : `Login failed: ${err instanceof Error ? err.message : err}`,
       );
     } finally {
@@ -28,7 +28,9 @@ export function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="centered">
       <form className="card login" onSubmit={submit}>
-        <h1>Sovereign Control</h1>
+        <span className="eyebrow">SovereignStack</span>
+        <h1>Welcome back</h1>
+        <p className="login-intro">Sign in to your private AI workspace and administration portal.</p>
         <label>
           Username
           <input

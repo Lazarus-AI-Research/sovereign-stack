@@ -128,6 +128,10 @@ func TestJobLifecycle(t *testing.T) {
 		if body["fail"] == "yes" {
 			return nil, fmt.Errorf("intentional failure")
 		}
+		total := int64(10)
+		if err := jobs.Report(ctx, jobs.Progress{Stage: "echoing", Message: "Echoing value", Current: 5, Total: &total, Unit: "bytes"}); err != nil {
+			return nil, err
+		}
 		return map[string]string{"echoed": body["message"]}, nil
 	})
 
@@ -151,6 +155,9 @@ func TestJobLifecycle(t *testing.T) {
 			}
 			if bad.Error == nil || *bad.Error != "intentional failure" {
 				t.Errorf("error: %v", bad.Error)
+			}
+			if good.ProgressTotal == nil || *good.ProgressTotal != 10 || good.ProgressCurrent != 10 || good.HeartbeatAt.IsZero() {
+				t.Errorf("observable progress: %+v", good)
 			}
 			return
 		}

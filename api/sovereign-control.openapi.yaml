@@ -90,6 +90,16 @@ paths:
       operationId: getStatus
       summary: Aggregate appliance status
       responses: {"200": {$ref: "#/components/responses/Document"}}
+  /readiness:
+    get:
+      operationId: getReadiness
+      summary: Get independent user-facing capability readiness
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /applications:
+    get:
+      operationId: listPortalApplications
+      summary: List same-origin applications available to the current role
+      responses: {"200": {$ref: "#/components/responses/Document"}}
   /hardware:
     get:
       operationId: getHardware
@@ -137,6 +147,18 @@ paths:
       summary: Add a local, catalog, remote, or cloud model
       requestBody: {$ref: "#/components/requestBodies/Document"}
       responses: {"201": {$ref: "#/components/responses/Document"}, "400": {$ref: "#/components/responses/Error"}}
+  /model-catalog:
+    get:
+      operationId: listModelCatalog
+      summary: List reviewed, hardware-compatible product models
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /model-catalog/{id}/install:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: installCatalogModel
+      summary: Register and optionally activate a reviewed model
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Accepted"}, "422": {$ref: "#/components/responses/Error"}}
   /models/{id}:
     parameters: [{$ref: "#/components/parameters/ID"}]
     patch:
@@ -427,12 +449,75 @@ paths:
       summary: Replace validated feature flags
       requestBody: {$ref: "#/components/requestBodies/Document"}
       responses: {"200": {$ref: "#/components/responses/Document"}, "422": {$ref: "#/components/responses/Error"}}
+  /network:
+    get:
+      operationId: getNetworkAccess
+      summary: Get host-managed portal publication status
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    put:
+      operationId: updateNetworkAccess
+      summary: Apply an allowlisted desktop, LAN, or HTTPS domain mode
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Document"}, "503": {$ref: "#/components/responses/Error"}}
+  /repair:
+    post:
+      operationId: repairPortal
+      summary: Reconcile core portal services through the allowlisted host service
+      responses: {"200": {$ref: "#/components/responses/Document"}, "503": {$ref: "#/components/responses/Error"}}
+  /support-bundles:
+    get:
+      operationId: listSupportBundles
+      summary: List secret-redacted diagnostic bundles
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+    post:
+      operationId: createSupportBundle
+      summary: Create a secret-redacted diagnostic bundle
+      responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /support-bundles/{id}/download:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    get:
+      operationId: downloadSupportBundle
+      summary: Download a secret-redacted diagnostic bundle
+      responses: {"200": {description: Gzip support archive}}
+  /updates:
+    get:
+      operationId: getUpdates
+      summary: Check the release feed and host update state
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /updates/apply:
+    post:
+      operationId: applyUpdate
+      summary: Schedule signature-verified update with backup and rollback
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"202": {$ref: "#/components/responses/Document"}, "503": {$ref: "#/components/responses/Error"}}
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List recent observable operations
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /jobs/events:
+    get:
+      operationId: streamJobs
+      summary: Stream observable operation updates
+      responses: {"200": {description: Server-sent job events}}
   /jobs/{id}:
     parameters: [{$ref: "#/components/parameters/ID"}]
     get:
       operationId: getJob
       summary: Poll a long-running operation
       responses: {"200": {$ref: "#/components/responses/Document"}, "404": {$ref: "#/components/responses/Error"}}
+  /jobs/{id}/cancel:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: cancelJob
+      summary: Request cancellation of a queued or running operation
+      responses: {"202": {$ref: "#/components/responses/Document"}, "409": {$ref: "#/components/responses/Error"}}
+  /jobs/{id}/retry:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    post:
+      operationId: retryJob
+      summary: Retry a failed or canceled operation
+      responses: {"202": {$ref: "#/components/responses/Accepted"}, "409": {$ref: "#/components/responses/Error"}}
 
 components:
   securitySchemes:
@@ -465,4 +550,7 @@ components:
           schema:
             type: object
             required: [error]
-            properties: {error: {type: string}}
+            properties:
+              error: {type: string}
+              code: {type: string}
+              action: {type: string}

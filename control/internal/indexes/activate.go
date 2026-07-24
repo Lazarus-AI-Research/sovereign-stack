@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	workspaceapi "github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 	"github.com/jackc/pgx/v5"
 )
@@ -25,6 +26,7 @@ type GlobalActivationDeps struct {
 }
 
 func (d GlobalActivationDeps) Handle(ctx context.Context, payload json.RawMessage) (result any, returnErr error) {
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "preparing", Message: "Preparing appliance-wide embedding change"})
 	var request embeddings.ActivatePayload
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, fmt.Errorf("bad activation payload: %w", err)
@@ -112,6 +114,7 @@ func (d GlobalActivationDeps) Handle(ctx context.Context, payload json.RawMessag
 
 	if d.Prepare != nil {
 		providerPrepared = true
+		_ = jobs.Report(ctx, jobs.Progress{Stage: "loading_provider", Message: "Loading the new embedding provider"})
 		if err := d.Prepare(ctx, request.ProfileID, profile); err != nil {
 			return nil, fmt.Errorf("prepare embedding provider: %w", err)
 		}
@@ -125,7 +128,9 @@ func (d GlobalActivationDeps) Handle(ctx context.Context, payload json.RawMessag
 	if dimensions < 1 {
 		return nil, fmt.Errorf("embedding provider returned no dimensions")
 	}
-	for _, targetID := range targetIDs {
+	total := int64(len(targetIDs))
+	for index, targetID := range targetIDs {
+		_ = jobs.Report(ctx, jobs.Progress{Stage: "rebuilding_indexes", Message: fmt.Sprintf("Rebuilding workspace %d of %d", index+1, len(targetIDs)), Current: int64(index), Total: &total, Unit: "workspaces"})
 		rebuildPayload, _ := json.Marshal(RebuildPayload{
 			TargetIndexID: targetID, ActivateWhenComplete: false, KeepMaintenance: true,
 		})
@@ -140,6 +145,7 @@ func (d GlobalActivationDeps) Handle(ctx context.Context, payload json.RawMessag
 	if err := d.Store.ActivateBatch(ctx, targetIDs, state); err != nil {
 		return nil, err
 	}
+	_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Embedding provider activated", Current: total, Total: &total, Unit: "workspaces"})
 	state, _ = d.Store.EmbeddingState(ctx)
 	return map[string]any{
 		"state": state, "rebuilt_workspaces": len(targetIDs), "indexes": targetIDs,

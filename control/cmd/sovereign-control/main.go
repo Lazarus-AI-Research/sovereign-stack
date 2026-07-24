@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/api"
@@ -29,6 +30,8 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/jobs"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/support"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/updates"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/web"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -65,6 +68,21 @@ func main() {
 
 	sovereignRoot := cmp.Or(os.Getenv("SOVEREIGN_ROOT"), "/sovereign")
 	server.ClaimFile = cmp.Or(os.Getenv("SOVEREIGN_ADMIN_CLAIM_FILE"), sovereignRoot+"/state/admin-claim")
+	hostLifecycleToken := os.Getenv("SOVEREIGN_HOSTD_TOKEN") // upgrade/dev compatibility
+	if hostLifecycleToken == "" {
+		tokenPath := cmp.Or(os.Getenv("SOVEREIGN_HOSTD_TOKEN_FILE"), sovereignRoot+"/state/hostd-token")
+		if raw, err := os.ReadFile(tokenPath); err == nil {
+			hostLifecycleToken = strings.TrimSpace(string(raw))
+		}
+	}
+	server.HostLifecycle = hostagent.NewLifecycle(
+		cmp.Or(os.Getenv("SOVEREIGN_HOSTD_URL"), "http://host.docker.internal:9191"),
+		hostLifecycleToken,
+	)
+	server.Updates = updates.New(cmp.Or(
+		os.Getenv("SOVEREIGN_RELEASE_FEED_URL"),
+		"https://api.github.com/repos/Lazarus-AI-Research/sovereign-stack/releases/latest",
+	))
 	registry := models.NewRegistry(sovereignRoot + "/config/model-registry.yaml")
 	server.Models = registry
 	server.Reports = sovereignRoot + "/reports"
@@ -154,6 +172,9 @@ func main() {
 		}
 		server.Bundles = bundleDeps
 		runner.Register("bundle-create", bundleDeps.HandleCreate)
+		supportDeps := &support.Deps{Root: sovereignRoot, Version: version, Profile: os.Getenv("SOVEREIGN_PROFILE")}
+		server.Support = supportDeps
+		runner.Register("support-bundle", supportDeps.Handle)
 		activator := embeddings.ActivateDeps{
 			Registry: profiles,
 			Service:  server.Embeddings,
@@ -243,16 +264,20 @@ func main() {
 		}
 		evalsImage := cmp.Or(os.Getenv("SOVEREIGN_EVALS_IMAGE"), "ghcr.io/lazarus-ai-research/sovereign-evals:"+version)
 		runner.Register("evals-run", func(ctx context.Context, payload json.RawMessage) (any, error) {
+			total := int64(2)
+			_ = jobs.Report(ctx, jobs.Progress{Stage: "preparing", Message: "Preparing evaluation suite", Current: 0, Total: &total, Unit: "steps"})
 			var body struct {
 				Suite string `json:"suite"`
 			}
 			if err := json.Unmarshal(payload, &body); err != nil {
 				return nil, err
 			}
+			_ = jobs.Report(ctx, jobs.Progress{Stage: "running", Message: "Running " + body.Suite + " evaluation", Current: 1, Total: &total, Unit: "steps"})
 			containerID, err := server.Proxy.RunEvals(ctx, evalsImage, body.Suite)
 			if err != nil {
 				return nil, err
 			}
+			_ = jobs.Report(ctx, jobs.Progress{Stage: "complete", Message: "Evaluation complete", Current: 2, Total: &total, Unit: "steps"})
 			return map[string]string{"container_id": containerID, "suite": body.Suite}, nil
 		})
 		server.Jobs = runner

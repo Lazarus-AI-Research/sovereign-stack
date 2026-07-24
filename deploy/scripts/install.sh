@@ -9,6 +9,8 @@ VERSION="${VERSION#v}"
 SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
 BIN_DIR="${SOVEREIGN_BIN_DIR:-$HOME/.local/bin}"
 PROFILE="${SOVEREIGN_PROFILE:-}"
+ACCESS_MODE="${SOVEREIGN_ACCESS_MODE:-}"
+ACCESS_TARGET=""
 REPOSITORY="${SOVEREIGN_GITHUB_REPOSITORY:-Lazarus-AI-Research/sovereign-stack}"
 RELEASE_URL="${SOVEREIGN_RELEASE_URL:-}"
 OFFLINE_BUNDLE=""
@@ -26,6 +28,8 @@ while [[ $# -gt 0 ]]; do
     --version) VERSION="${2#v}"; shift 2 ;;
     --home) SOVEREIGN_HOME="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
+    --access) ACCESS_MODE="$2"; shift 2 ;;
+    --domain) ACCESS_MODE=domain; ACCESS_TARGET="$2"; shift 2 ;;
     --offline-bundle) OFFLINE_BUNDLE="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -89,12 +93,28 @@ if [[ -z "$PROFILE" ]]; then
   fi
 fi
 [[ "$PROFILE" == metal-arm64 || "$PROFILE" == cuda-x86_64 ]] || die "unsupported profile $PROFILE"
+if [[ -z "$ACCESS_MODE" ]]; then
+  # A loopback-only result is unusable over SSH. Default headless installs to
+  # the private LAN; local desktop installs remain loopback-only.
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then ACCESS_MODE=lan; else ACCESS_MODE=desktop; fi
+fi
+[[ "$ACCESS_MODE" == desktop || "$ACCESS_MODE" == lan || "$ACCESS_MODE" == domain ]] || \
+  die "--access must be desktop, lan, or domain"
+if [[ "$ACCESS_MODE" == domain ]]; then
+  [[ -n "$ACCESS_TARGET" ]] || die "domain access requires --domain <hostname>"
+  SOVEREIGN_SITE_ADDRESS="$ACCESS_TARGET"
+fi
 
 say "Checking $PROFILE prerequisites"
+HOST_MEMORY_BYTES=""
+GPU_VRAM_MIB=""
+GPU_NAME=""
 if [[ "$PROFILE" == metal-arm64 ]]; then
   [[ "$(uname -s)-$(uname -m)" == Darwin-arm64 ]] || die "metal-arm64 requires an Apple Silicon Mac"
   MEMORY="$(sysctl -n hw.memsize)"
   (( MEMORY >= 32 * 1024 * 1024 * 1024 )) || die "at least 32GB unified memory is required"
+  HOST_MEMORY_BYTES="$MEMORY"
+  GPU_NAME="Apple Silicon"
 else
   [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 ]] || die "cuda-x86_64 requires Ubuntu 24.04 x86_64"
   OS_RELEASE="${SOVEREIGN_OS_RELEASE:-/etc/os-release}"
@@ -107,6 +127,16 @@ else
   need nvidia-smi
   VRAM="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i 0 | head -n1 | tr -d ' ')"
   (( VRAM >= 24576 )) || die "GPU 0 must provide at least 24GB VRAM"
+  GPU_VRAM_MIB="$VRAM"
+  GPU_NAME="$( { nvidia-smi --query-gpu=name --format=csv,noheader -i 0 2>/dev/null || true; } | head -n1 | tr -d '\r')"
+  GPU_NAME="${GPU_NAME:-NVIDIA GPU}"
+  if [[ -r /proc/meminfo ]]; then
+    HOST_MEMORY_BYTES="$(( $(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo) * 1024 ))"
+  elif command -v sysctl >/dev/null 2>&1; then
+    HOST_MEMORY_BYTES="$(sysctl -n hw.memsize 2>/dev/null || printf 0)"
+  else
+    HOST_MEMORY_BYTES=0
+  fi
   docker info --format '{{json .Runtimes}}' | grep -qi nvidia || die "NVIDIA Container Toolkit is not configured for Docker"
 fi
 
@@ -228,6 +258,10 @@ else
 fi
 
 SOVEREIGN_HOME="$SOVEREIGN_HOME" SOVEREIGN_PROFILE="$PROFILE" SOVEREIGN_VERSION="$VERSION" \
+  SOVEREIGN_ACCESS_MODE="$ACCESS_MODE" SOVEREIGN_SITE_ADDRESS="${SOVEREIGN_SITE_ADDRESS:-}" \
+  SOVEREIGN_HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')" SOVEREIGN_HOST_ARCH="$(uname -m)" \
+  SOVEREIGN_HOST_MEMORY_BYTES="$HOST_MEMORY_BYTES" SOVEREIGN_GPU_NAME="$GPU_NAME" \
+  SOVEREIGN_GPU_VRAM_MIB="$GPU_VRAM_MIB" \
   SOVEREIGN_RELEASE_ROOT="$TARGET" "$TARGET/deploy/scripts/generate-config.sh"
 if (( OFFLINE_MODE == 1 )); then
   : > "$SOVEREIGN_HOME/state/offline"
@@ -237,28 +271,84 @@ fi
 
 mkdir -p "$BIN_DIR"
 install -m 755 "$TARGET/deploy/scripts/sovereign" "$BIN_DIR/sovereign"
+printf '%s\n' "$BIN_DIR" > "$SOVEREIGN_HOME/state/bin-dir"
+chmod 600 "$SOVEREIGN_HOME/state/bin-dir"
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) HOSTD_ASSET="$TARGET/deploy/assets/sovereign-hostd-darwin-arm64" ;;
+  Linux-x86_64) HOSTD_ASSET="$TARGET/deploy/assets/sovereign-hostd-linux-amd64" ;;
+  *) HOSTD_ASSET="" ;;
+esac
+if [[ -n "$HOSTD_ASSET" && -f "$HOSTD_ASSET" ]]; then
+  install -m 755 "$HOSTD_ASSET" "$BIN_DIR/sovereign-hostd"
+  if [[ "${SOVEREIGN_SKIP_HOSTD_INSTALL:-0}" != 1 ]]; then
+    SOVEREIGN_HOME="$SOVEREIGN_HOME" SOVEREIGN_HOSTD_BINARY="$BIN_DIR/sovereign-hostd" \
+      SOVEREIGN_CLI_BINARY="$BIN_DIR/sovereign" "$TARGET/deploy/scripts/install-hostd.sh"
+  fi
+else
+  say "Host lifecycle service is not present in this developer build; CLI access remains available"
+fi
+
+# Make the authenticated control portal available before optional runtimes and
+# model weights. The remainder of installation can be observed in the browser
+# instead of presenting a blank or unreachable URL for several minutes.
+if [[ "${SOVEREIGN_SKIP_START:-0}" != 1 ]]; then
+  say "Starting the SovereignStack portal"
+  SOVEREIGN_HOME="$SOVEREIGN_HOME" "$BIN_DIR/sovereign" start
+fi
 
 download_hf() {
-  local repo="$1" revision="$2" file="$3" expected="$4" destination="$5" url
+  local repo="$1" revision="$2" file="$3" expected="$4" destination="$5" url role total started
   [[ -f "$destination" && "$(sha256 "$destination")" == "$expected" ]] && return 0
   mkdir -p "$(dirname "$destination")"
   url="https://huggingface.co/$repo/resolve/$revision/$file?download=true"
+  role=generation
+  [[ "$destination" == *embeddinggemma* ]] && role=embeddings
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    total="$( { curl -fsSIL -H "Authorization: Bearer $HF_TOKEN" "$url" 2>/dev/null || true; } | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub("\\r", "", $2); value=$2} END{print value+0}')"
+  else
+    total="$( { curl -fsSIL "$url" 2>/dev/null || true; } | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub("\\r", "", $2); value=$2} END{print value+0}')"
+  fi
+  started="$(date +%s)"
+  tracked_curl() {
+    local resume="$1" pid result current progress_tmp
+    progress_tmp="$SOVEREIGN_HOME/state/install-progress.json.tmp"
+    if [[ -n "${HF_TOKEN:-}" ]]; then
+      if [[ "$resume" == true ]]; then curl -fL --retry 5 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url" &
+      else curl -fL --retry 5 -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url" & fi
+    elif [[ "$resume" == true ]]; then curl -fL --retry 5 -C - -o "$destination.part" "$url" &
+    else curl -fL --retry 5 -o "$destination.part" "$url" & fi
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+      current="$(wc -c < "$destination.part" 2>/dev/null || printf 0)"
+      printf '{"role":"%s","stage":"downloading","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
+        "$role" "${file//\"/}" "$current" "${total:-0}" "$started" > "$progress_tmp"
+      mv "$progress_tmp" "$SOVEREIGN_HOME/state/install-progress.json"
+      sleep 1
+    done
+    wait "$pid"; result=$?
+    return "$result"
+  }
   # macOS ships Bash 3.2, where expanding an empty array under `set -u`
   # raises an unbound-variable error. Keep the authenticated and anonymous
   # invocations explicit so the one-command Metal installer works there.
   if [[ -n "${HF_TOKEN:-}" ]]; then
-    if ! curl -fL --retry 5 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url"; then
+    if ! tracked_curl true; then
       rm -f "$destination.part"
-      curl -fL --retry 5 -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url" || \
+      tracked_curl false || \
         die "download failed for $repo/$file; set HF_TOKEN if the repository is gated"
     fi
-  elif ! curl -fL --retry 5 -C - -o "$destination.part" "$url"; then
+  elif ! tracked_curl true; then
     rm -f "$destination.part"
-    curl -fL --retry 5 -o "$destination.part" "$url" || \
+    tracked_curl false || \
       die "download failed for $repo/$file; set HF_TOKEN if the repository is gated"
   fi
+  printf '{"role":"%s","stage":"verifying","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
+    "$role" "${file//\"/}" "$(wc -c < "$destination.part")" "${total:-0}" "$started" > "$SOVEREIGN_HOME/state/install-progress.json"
   [[ "$(sha256 "$destination.part")" == "$expected" ]] || die "model checksum mismatch: $file"
   mv "$destination.part" "$destination"
+  printf '{"role":"%s","stage":"complete","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
+    "$role" "${file//\"/}" "$(wc -c < "$destination")" "$(wc -c < "$destination")" "$started" > "$SOVEREIGN_HOME/state/install-progress.json"
 }
 
 if [[ "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; then
@@ -333,7 +423,7 @@ if [[ "$PROFILE" == metal-arm64 && "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; the
 fi
 
 if [[ "${SOVEREIGN_SKIP_START:-0}" != 1 ]]; then
-  say "Starting SovereignStack"
+  say "Completing SovereignStack startup"
   SOVEREIGN_HOME="$SOVEREIGN_HOME" "$BIN_DIR/sovereign" up
 else
   say "Installation staged; start skipped by SOVEREIGN_SKIP_START=1"
@@ -342,6 +432,9 @@ fi
 echo
 echo "SovereignStack $VERSION installed for $PROFILE"
 echo "Portal: $(SOVEREIGN_HOME="$SOVEREIGN_HOME" "$BIN_DIR/sovereign" url)"
+if command -v qrencode >/dev/null 2>&1; then
+  SOVEREIGN_HOME="$SOVEREIGN_HOME" "$BIN_DIR/sovereign" url | qrencode -t ANSIUTF8
+fi
 echo "Open it any time with: sovereign open"
 echo "For another computer: sovereign access lan, or sovereign access domain your-hostname.example"
 echo "If the first-admin link expires: sovereign admin setup-link"

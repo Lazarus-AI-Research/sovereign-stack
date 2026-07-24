@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, ApiError, Identity } from "./api";
-import { Dashboard } from "./Dashboard";
 import { Login } from "./Login";
 import { Onboarding } from "./Onboarding";
 import { applyTheme } from "./theme";
 
 type Session = "checking" | "anonymous" | "authenticated";
+const Dashboard = lazy(() => import("./Dashboard").then((module) => ({ default: module.Dashboard })));
 
 export function App() {
   const [session, setSession] = useState<Session>("checking");
@@ -46,13 +46,13 @@ export function App() {
     return <Login onLogin={check} />;
   }
   return (
-    <Dashboard
+    <Suspense fallback={<div className="centered">Opening your portal…</div>}><Dashboard
       identity={identity!}
       onLogout={async () => {
         await api.logout().catch(() => {});
         setIdentity(null);
         setSession("anonymous");
       }}
-    />
+    /></Suspense>
   );
 }

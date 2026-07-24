@@ -14,3 +14,8 @@ tracing:
 
 prompt_logging:
   enabled: false
+
+experience:
+  portal_navigation: true
+  managed_downloads: true
+  host_lifecycle: true

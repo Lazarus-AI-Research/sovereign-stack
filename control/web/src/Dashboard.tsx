@@ -2,52 +2,70 @@ import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
 import {
   api,
   ApiError,
+  Application,
   BackupManifest,
   Branding,
   BundleManifest,
+  CatalogModel,
   CredentialMetadata,
   EmbeddingProfile,
   EvalReport,
   Features,
   IndexVersion,
   Identity,
+  Job,
   Manifest,
   ModelEntry,
+  NetworkStatus,
+  Readiness,
   RuntimeErrors,
   Status,
+  SupportBundle,
+  UpdateInfo,
   Workspace,
 } from "./api";
 import lazarusLogo from "./assets/lazarus_logo.png";
 import { applyTheme } from "./theme";
+import { t } from "./i18n";
 
 type RunAction = (label: string, action: () => Promise<unknown>) => Promise<boolean>;
+type ConfirmAction = (options: { title: string; message: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>;
 
-type PortalPage = "Home" | "Chat" | "Overview" | "Models" | "Embeddings" | "Evaluations" | "Grafana" | "Phoenix" | "People" | "Access" | "Resilience" | "Settings";
-const NAV: { page: PortalPage; path: string; minimum: Identity["role"] }[] = [
-  { page: "Home", path: "/", minimum: "member" },
-  { page: "Chat", path: "/chat", minimum: "member" },
-  { page: "Overview", path: "/overview", minimum: "manager" },
-  { page: "Models", path: "/models", minimum: "manager" },
-  { page: "Embeddings", path: "/embeddings", minimum: "manager" },
-  { page: "Evaluations", path: "/evaluations", minimum: "manager" },
-  { page: "Grafana", path: "/observe/grafana", minimum: "manager" },
-  { page: "Phoenix", path: "/observe/phoenix", minimum: "manager" },
-  { page: "People", path: "/people", minimum: "admin" },
-  { page: "Access", path: "/access", minimum: "admin" },
-  { page: "Resilience", path: "/resilience", minimum: "admin" },
-  { page: "Settings", path: "/settings", minimum: "admin" },
+type PortalPage = "Chat" | "Activity" | "Tools" | "System" | "Models" | "Embeddings" | "Evaluations" | "Grafana" | "Phoenix" | "People" | "API & Providers" | "Network Access" | "Backups & Recovery" | "Updates" | "Settings";
+type NavItem = { page: PortalPage; path: string; minimum: Identity["role"]; section: "primary" | "admin" };
+const NAV: NavItem[] = [
+  { page: "Chat", path: "/", minimum: "member", section: "primary" },
+  { page: "Activity", path: "/activity", minimum: "member", section: "primary" },
+  { page: "Tools", path: "/tools", minimum: "manager", section: "primary" },
+  { page: "System", path: "/admin/system", minimum: "manager", section: "primary" },
+  { page: "Models", path: "/admin/models", minimum: "manager", section: "admin" },
+  { page: "Embeddings", path: "/admin/embeddings", minimum: "manager", section: "admin" },
+  { page: "Evaluations", path: "/admin/evaluations", minimum: "manager", section: "admin" },
+  { page: "People", path: "/admin/people", minimum: "admin", section: "admin" },
+  { page: "API & Providers", path: "/admin/providers", minimum: "admin", section: "admin" },
+  { page: "Network Access", path: "/admin/network", minimum: "admin", section: "admin" },
+  { page: "Backups & Recovery", path: "/admin/recovery", minimum: "admin", section: "admin" },
+  { page: "Updates", path: "/admin/updates", minimum: "admin", section: "admin" },
+  { page: "Settings", path: "/admin/settings", minimum: "admin", section: "admin" },
 ];
+
+const LEGACY_PATHS: Record<string, PortalPage> = {
+  "/chat": "Chat", "/overview": "System", "/models": "Models", "/embeddings": "Embeddings",
+  "/evaluations": "Evaluations", "/people": "People", "/access": "API & Providers",
+  "/resilience": "Backups & Recovery", "/settings": "Settings",
+  "/observe/grafana": "Grafana", "/observe/phoenix": "Phoenix",
+};
 
 const ROLE_LEVEL = { member: 0, manager: 1, admin: 2 };
 
 const RUNTIME_STATES = ["initializing", "downloading", "compiling", "loading", "smoke_testing", "healthy"];
 
 function StatePill({ state }: { state?: string }) {
-  const tone = state === "healthy" || state === "active" || state === "succeeded" || state === "running"
+  const tone = state === "healthy" || state === "ready" || state === "active" || state === "succeeded" || state === "complete" || state === "running" || state === "enabled" || state === "network" || state === "this computer"
     ? "ok"
-    : state === "degraded" || state === "building" || state === "queued" || state === "validating"
+    : state === "degraded" || state === "rolled_back" || state === "building" || state === "queued" || state === "validating" || state === "starting" || state === "scheduled" || state === "installing" || state === "loading" || state === "downloading" || state === "canceling"
       ? "warn"
-      : state ? "bad" : "unknown";
+      : state === "failed" || state === "error" || state === "unreachable" ? "bad" : "unknown";
   return <span className={`pill ${tone}`}>{state?.replaceAll("_", " ") ?? "unreachable"}</span>;
 }
 
@@ -77,16 +95,118 @@ async function completeJob(start: { job_id?: string }, timeoutMs?: number) {
   if (start.job_id) await api.waitJob(start.job_id, timeoutMs);
 }
 
-function Overview({ run }: { run: RunAction }) {
+function Activity({ canManage, run }: { canManage: boolean; run: RunAction }) {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const refresh = useCallback(async () => {
+    const [activity, state] = await Promise.all([api.jobs(), api.readiness()]);
+    setJobs(activity.jobs); setReadiness(state);
+  }, []);
+  useEffect(() => {
+    refresh().catch(() => {});
+    const readinessTimer = window.setInterval(() => api.readiness().then(setReadiness).catch(() => {}), 5000);
+    let pollingTimer: number | null = null;
+    const stream = new EventSource(api.jobsEventsURL(), { withCredentials: true });
+    stream.addEventListener("jobs", (event) => {
+      try { setJobs((JSON.parse((event as MessageEvent).data) as { jobs: Job[] }).jobs); } catch { /* Polling remains the compatibility fallback. */ }
+    });
+    stream.onerror = () => {
+      stream.close();
+      if (pollingTimer === null) pollingTimer = window.setInterval(() => api.jobs().then((result) => setJobs(result.jobs)).catch(() => {}), 2000);
+    };
+    return () => { stream.close(); window.clearInterval(readinessTimer); if (pollingTimer !== null) window.clearInterval(pollingTimer); };
+  }, [refresh]);
+  return <>
+    <section className="card">
+      <PanelTitle title="System readiness" subtitle="Core capabilities start independently, so a slow optional service never blocks the portal." action={<button className="small secondary" onClick={() => refresh()}>Refresh</button>} />
+      <div className="readiness-grid">{Object.entries(readiness?.components ?? {}).map(([name, component]) => <div className="readiness-item" key={name}>
+        <div><strong>{name.charAt(0).toUpperCase() + name.slice(1)}</strong><small>{component.message}</small>{component.progress_total ? <><progress max={component.progress_total} value={component.progress_current || 0} /><small>{formatBytes(component.progress_current || 0)} of {formatBytes(component.progress_total)}{component.eta_seconds ? ` · about ${Math.max(1, Math.ceil(component.eta_seconds / 60))} min remaining` : ""}</small></> : null}</div><StatePill state={component.state} />
+      </div>)}</div>
+    </section>
+    <section className="card">
+      <PanelTitle title="Activity" subtitle="Downloads, model changes, indexes, evaluations, backups, and maintenance continue safely if you leave this page." />
+      {jobs.length === 0 ? <Empty>No background activity yet.</Empty> : <div className="activity-list">{jobs.map((job) => {
+        const percent = job.progress_total && job.progress_total > 0 ? Math.min(100, Math.round(job.progress_current / job.progress_total * 100)) : null;
+        return <article className="activity-item" key={job.id}>
+          <div className="activity-head"><div><strong>{job.kind.replaceAll("-", " ")}</strong><small>{job.message || job.stage.replaceAll("_", " ")}</small></div><StatePill state={job.status === "running" ? job.stage : job.status} /></div>
+          {(job.status === "running" || job.status === "queued") && <div className="progress-row"><progress max={job.progress_total || 1} value={job.progress_total ? job.progress_current : undefined} /><span>{job.progress_unit === "bytes" && job.progress_total ? `${formatBytes(job.progress_current)} / ${formatBytes(job.progress_total)}${job.progress_rate ? ` · ${formatBytes(job.progress_rate)}/s` : ""}${job.eta_seconds ? ` · ${Math.max(1, Math.ceil(job.eta_seconds / 60))} min` : ""}` : percent === null ? "In progress" : `${percent}%`}</span></div>}
+          {job.error && <div className="operation-error"><strong>{job.error_code || "Operation failed"}</strong><span>{job.error}</span>{job.action && <span>{job.action}</span>}</div>}
+          {canManage && <div className="actions">
+            {(job.status === "queued" || job.status === "running") && <button className="small secondary" disabled={job.cancel_requested} onClick={() => run("Cancel operation", async () => { await api.cancelJob(job.id); await refresh(); })}>{job.cancel_requested ? "Canceling…" : "Cancel"}</button>}
+            {(job.status === "failed" || job.status === "canceled") && <button className="small" onClick={() => run("Retry operation", async () => { await api.retryJob(job.id); await refresh(); })}>Retry</button>}
+          </div>}
+        </article>;
+      })}</div>}
+    </section>
+  </>;
+}
+
+function Tools({ open }: { open: (path: string) => void }) {
+  const [applications, setApplications] = useState<Application[]>([]);
+  useEffect(() => { api.applications().then((result) => setApplications(result.applications)).catch(() => {}); }, []);
+  const tools = applications.filter((application) => application.id !== "chat");
+  return <section className="card">
+    <PanelTitle title="Tools" subtitle="Every bundled tool stays behind the same SovereignStack sign-in and portal URL." />
+    {tools.length === 0 ? <Empty>No additional tools are available for your role.</Empty> : <div className="tool-grid">{tools.map((tool) => <button className="tool-card" key={tool.id} onClick={() => open(tool.path)}>
+      <span className="tool-mark">{tool.label.charAt(0)}</span><span><strong>{tool.label}</strong><small>{tool.description}</small></span><span aria-hidden="true">→</span>
+    </button>)}</div>}
+  </section>;
+}
+
+function NetworkAccess({ run }: { run: RunAction }) {
+  const [status, setStatus] = useState<NetworkStatus | null>(null);
+  const [mode, setMode] = useState<"desktop" | "lan" | "domain">("desktop");
+  const [target, setTarget] = useState("");
+  const [pendingURL, setPendingURL] = useState("");
+  const refresh = useCallback(async () => {
+    const next = await api.network();
+    setStatus(next);
+    if (next.access_mode) setMode(next.access_mode);
+    if (next.access_mode === "lan") setTarget(next.bind_address);
+    if (next.access_mode === "domain") setTarget(next.site_address);
+  }, []);
+  useEffect(() => { refresh().catch(() => {}); }, [refresh]);
+  const url = status?.public_url || window.location.origin;
+  const local = status?.access_mode === "desktop";
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const ok = await run("Update network access", async () => { await api.setNetwork(mode, mode === "desktop" ? "" : target); });
+    if (!ok) return;
+    const current = new URL(status?.public_url || window.location.origin);
+    const port = current.port || "8880";
+    const next = mode === "domain" ? `https://${target}/` : mode === "lan" ? `http://${target}:${port}/` : `http://127.0.0.1:${port}/`;
+    setPendingURL(next);
+    const localBrowser = ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
+    if (mode !== "desktop" || localBrowser) window.setTimeout(() => window.location.assign(next), 2200);
+  }
+  return <div className="two-column">
+    <section className="card"><PanelTitle title="Portal address" subtitle="Share one portal address—not individual service ports." />
+      <div className="copy-row"><input readOnly value={url} aria-label="Portal address" /><button onClick={() => navigator.clipboard.writeText(url)}>Copy</button></div>
+      <div className="privacy-list"><div><span>Current reachability</span><StatePill state={local ? "this computer" : "network"} /></div><div><span>TLS</span><StatePill state={window.location.protocol === "https:" ? "healthy" : "disabled"} /></div></div>
+    </section>
+    <section className="card"><PanelTitle title="Managed network access" subtitle="Desktop, private LAN, and domain publication use the signed host service rather than container privileges." />
+      {status?.managed ? <form className="stack-form" onSubmit={save}>
+        <label>Who can reach the portal<select value={mode} onChange={(event) => { setMode(event.target.value as typeof mode); setTarget(""); }}><option value="desktop">Only this computer</option><option value="lan">Devices on my private network</option><option value="domain">A domain with automatic HTTPS</option></select></label>
+        {mode === "lan" && <label>Private IPv4 address<input required value={target} onChange={(event) => setTarget(event.target.value)} placeholder="192.168.1.20" /></label>}
+        {mode === "domain" && <label>Domain name<input required value={target} onChange={(event) => setTarget(event.target.value.toLowerCase())} placeholder="ai.example.com" /></label>}
+        <p className="notice">Changing this setting can move the portal to a new address. Copy the new address when it appears.</p>
+        {pendingURL && <p className="notice" role="status">{mode === "desktop" && !["127.0.0.1", "localhost", "::1"].includes(window.location.hostname) ? <>Access is now host-only. Open <strong>{pendingURL}</strong> on that computer.</> : <>Opening <a href={pendingURL}>{pendingURL}</a>…</>}</p>}<button disabled={Boolean(pendingURL)}>Apply access mode</button>
+      </form> : <p className="notice">This installation predates managed host controls. Upgrade the host package to enable browser-based access changes; the existing <code>sovereign access</code> commands remain supported.</p>}
+    </section>
+  </div>;
+}
+
+function Overview({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [errors, setErrors] = useState<RuntimeErrors | null>(null);
+  const [supportBundles, setSupportBundles] = useState<SupportBundle[]>([]);
 
   const refresh = useCallback(async () => {
-    const [nextStatus, nextManifest, nextErrors] = await Promise.all([
-      api.status(), api.manifest().catch(() => null), api.runtimeErrors().catch(() => null),
+    const [nextStatus, nextManifest, nextErrors, support] = await Promise.all([
+      api.status(), api.manifest().catch(() => null), api.runtimeErrors().catch(() => null), api.supportBundles().catch(() => ({ support_bundles: [] })),
     ]);
-    setStatus(nextStatus); setManifest(nextManifest); setErrors(nextErrors);
+    setStatus(nextStatus); setManifest(nextManifest); setErrors(nextErrors); setSupportBundles(support.support_bundles);
   }, []);
 
   useEffect(() => {
@@ -106,7 +226,7 @@ function Overview({ run }: { run: RunAction }) {
 
     <section className="card">
       <PanelTitle title="Runtime lifecycle" subtitle="A ready appliance completes every stage and keeps both required roles healthy."
-        action={<button className="secondary" onClick={() => run("Restart runtime", async () => { await api.restartRuntime(); })}>Restart runtime</button>} />
+        action={<div className="actions"><button className="secondary" onClick={async () => { if (await confirm({ title: "Repair portal services?", message: "Repair reconciles the signed configuration and restarts only services that are not healthy. Chat may pause briefly; appliance data is not removed.", confirmLabel: "Run repair" })) await run("Repair portal services", async () => { await api.repair(); await refresh(); }); }}>Repair</button><button className="secondary" onClick={async () => { if (await confirm({ title: "Restart the generation runtime?", message: "Active generation requests will stop and Chat will be unavailable while the current model reloads. Configuration and data are unchanged.", confirmLabel: "Restart runtime" })) await run("Restart runtime", async () => { await api.restartRuntime(); }); }}>Restart runtime</button></div>} />
       <ol className="statemachine">
         {RUNTIME_STATES.map((state) => <li key={state} className={state === runtimeState ? "current" : ""}>{state.replaceAll("_", " ")}</li>)}
       </ol>
@@ -130,17 +250,25 @@ function Overview({ run }: { run: RunAction }) {
         {Object.entries(status?.services ?? {}).map(([service, state]) => <div key={service}><StatePill state={state} /><span>{service.replace(/^sovereign-/, "")}</span></div>)}
       </div>
     </section>
+    <section className="card">
+      <PanelTitle title="Diagnostics" subtitle="Support bundles exclude prompts and secrets and redact environment values by allowlist."
+        action={<button className="secondary" onClick={() => run("Create support bundle", async () => { await completeJob(await api.createSupportBundle()); await refresh(); })}>Create support bundle</button>} />
+      {supportBundles.length === 0 ? <Empty>No support bundles created.</Empty> : <div className="compact-list">{supportBundles.map((bundle) => <div key={bundle.id}><div><strong>{bundle.created_at}</strong><small>{formatBytes(bundle.bytes)} · SHA-256 {bundle.sha256.slice(0, 12)}…</small></div><a className="button small secondary" href={api.supportBundleDownloadURL(bundle.id)}>Download</a></div>)}</div>}
+    </section>
   </>;
 }
 
-function Models({ run }: { run: RunAction }) {
+function Models({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   const [models, setModels] = useState<ModelEntry[]>([]);
+  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [profile, setProfile] = useState("");
   const [credentials, setCredentials] = useState<CredentialMetadata[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ id: "", role: "generation", source: "cloud", provider: "openai", model: "", revision: "", artifact: "", sha256: "", base_url: "", credential_id: "" });
   const refresh = useCallback(async () => {
-    const [modelResult, credentialResult] = await Promise.all([api.models(), api.credentials().catch(() => ({ credentials: [] }))]);
+    const [modelResult, credentialResult, catalogResult] = await Promise.all([api.models(), api.credentials().catch(() => ({ credentials: [] })), api.modelCatalog()]);
     setModels(modelResult.models); setCredentials(credentialResult.credentials);
+    setCatalog(catalogResult.models); setProfile(catalogResult.profile);
   }, []);
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
 
@@ -162,8 +290,17 @@ function Models({ run }: { run: RunAction }) {
 
   return <>
     <section className="card">
-      <PanelTitle title="Model registry" subtitle="Local, pinned catalog, and cloud routes share stable product aliases."
-        action={<button onClick={() => setShowForm(!showForm)}>{showForm ? "Cancel" : "Add model"}</button>} />
+      <PanelTitle title="Recommended models" subtitle={`Reviewed for ${profile || "this appliance"}. Technical registry pins are managed automatically.`} />
+      <div className="catalog-grid">{catalog.map((item) => <article className={`catalog-card ${item.recommended ? "recommended" : ""}`} key={item.id}>
+        <div className="row"><span className="catalog-role">{item.role}</span>{item.recommended && <span className="recommendation">Recommended</span>}</div>
+        <h3>{item.display_name}</h3><p>{item.description}</p>
+        <div className="catalog-meta"><span>{formatBytes(item.download_bytes)}</span><span>{item.capabilities.join(" · ")}</span></div>
+        {!item.compatible ? <div className="compatibility-error">{item.compatibility_reason || `Not compatible with ${profile}`}</div> : <button disabled={item.role === "embedding" && item.registered} onClick={() => run(`${item.registered ? "Start" : "Install"} ${item.display_name}`, async () => { await api.installCatalogModel(item.id); await refresh(); })}>{item.role === "embedding" && item.registered ? "Built in" : item.registered ? "Use this model" : "Install"}</button>}
+      </article>)}</div>
+    </section>
+    <section className="card">
+      <PanelTitle title="Installed and custom models" subtitle="Add a custom provider or pinned model only when the recommended catalog is not enough."
+        action={<button className="secondary" onClick={() => setShowForm(!showForm)}>{showForm ? "Close advanced" : "Add custom model"}</button>} />
       {showForm && <form className="form-grid inset" onSubmit={submit}>
         <label>Product ID<input required value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="team-coding-model" /></label>
         <label>Role<select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="generation">Generation</option><option value="embedding">Embedding</option></select></label>
@@ -185,7 +322,7 @@ function Models({ run }: { run: RunAction }) {
           <td><div className="actions">
             {model.role !== "embedding" && <button className="small secondary" onClick={() => run(`Load ${model.id}`, async () => { await completeJob(await api.loadModel(model.id)); await refresh(); })}>Load</button>}
             <button className="small secondary" onClick={() => run(`Smoke-test ${model.id}`, async () => { await completeJob(await api.smokeModel(model.id)); })}>Test</button>
-            <button className="small danger" onClick={() => window.confirm(`Delete ${model.id}?`) && run(`Delete ${model.id}`, async () => { await api.deleteModel(model.id); await refresh(); })}>Delete</button>
+            <button className="small danger" onClick={async () => { if (await confirm({ title: `Delete ${model.id}?`, message: "This removes the registry entry. Existing downloaded files are retained.", confirmLabel: "Delete model", danger: true })) await run(`Delete ${model.id}`, async () => { await api.deleteModel(model.id); await refresh(); }); }}>Delete</button>
           </div></td>
         </tr>)}</tbody>
       </table></div>}
@@ -300,7 +437,7 @@ function Evaluations({ run }: { run: RunAction }) {
   </>;
 }
 
-function Access({ run }: { run: RunAction }) {
+function Access({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   const [credentials, setCredentials] = useState<CredentialMetadata[]>([]);
   const [credentialForm, setCredentialForm] = useState({ id: "", provider: "openai", label: "", secret: "" });
   const [keys, setKeys] = useState<Record<string, unknown>>({});
@@ -341,7 +478,7 @@ function Access({ run }: { run: RunAction }) {
         <label>Secret<input required type="password" autoComplete="off" value={credentialForm.secret} onChange={(e) => setCredentialForm({ ...credentialForm, secret: e.target.value })} /></label>
         <button type="submit">Encrypt and save</button>
       </form>
-      <div className="compact-list">{credentials.map((credential) => <div key={credential.id}><div><strong>{credential.label}</strong><small>{credential.provider} · {credential.id}</small></div><button className="small danger" onClick={() => window.confirm(`Delete ${credential.label}?`) && run("Delete credential", async () => { await api.deleteCredential(credential.id); await refresh(); })}>Delete</button></div>)}</div>
+      <div className="compact-list">{credentials.map((credential) => <div key={credential.id}><div><strong>{credential.label}</strong><small>{credential.provider} · {credential.id}</small></div><button className="small danger" onClick={async () => { if (await confirm({ title: `Delete ${credential.label}?`, message: "Models using this credential will stop working until another credential is selected.", confirmLabel: "Delete credential", danger: true })) await run("Delete credential", async () => { await api.deleteCredential(credential.id); await refresh(); }); }}>Delete</button></div>)}</div>
     </section>
     <section className="card"><PanelTitle title="Gateway keys" subtitle="Issue scoped keys with model, spend, and request limits." />
       <form className="stack-form inset" onSubmit={createKey}>
@@ -356,7 +493,7 @@ function Access({ run }: { run: RunAction }) {
   </div>;
 }
 
-function Resilience({ run }: { run: RunAction }) {
+function Resilience({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   const [backups, setBackups] = useState<BackupManifest[]>([]);
   const [bundles, setBundles] = useState<BundleManifest[]>([]);
   const [profile, setProfile] = useState("");
@@ -370,7 +507,7 @@ function Resilience({ run }: { run: RunAction }) {
   return <div className="two-column">
     <section className="card"><PanelTitle title="Backups" subtitle="Databases and product config; model weights and secrets are excluded."
       action={<button onClick={() => run("Create backup", async () => { await completeJob(await api.createBackup()); await refresh(); })}>Create backup</button>} />
-      {backups.length === 0 ? <Empty>No completed backups.</Empty> : <div className="compact-list">{backups.map((backup) => <div key={backup.id}><div><strong>{backup.id}</strong><small>{backup.files.length} files · {backup.created_at}</small></div><div className="actions"><button className="small secondary" onClick={() => run("Verify backup", async () => { const result = await api.verifyBackup(backup.id); if (!result.valid) throw new ApiError(422, result.problems.join(", ")); })}>Verify</button><button className="small danger" onClick={() => window.confirm("Restore replaces the live appliance databases and configuration. Continue?") && run("Restore backup", async () => { await completeJob(await api.restoreBackup(backup.id)); })}>Restore</button></div></div>)}</div>}
+      {backups.length === 0 ? <Empty>No completed backups.</Empty> : <div className="compact-list">{backups.map((backup) => <div key={backup.id}><div><strong>{backup.id}</strong><small>{backup.files.length} files · {backup.created_at}</small></div><div className="actions"><button className="small secondary" onClick={() => run("Verify backup", async () => { const result = await api.verifyBackup(backup.id); if (!result.valid) throw new ApiError(422, result.problems.join(", ")); })}>Verify</button><button className="small danger" onClick={async () => { if (await confirm({ title: "Restore this backup?", message: "Restore verifies this backup, creates a fresh rollback point, then replaces live databases and configuration. Chat pauses temporarily; a failed restore automatically reapplies the rollback point.", confirmLabel: "Restore backup", danger: true })) await run("Restore backup", async () => { await completeJob(await api.restoreBackup(backup.id)); }); }}>Restore</button></div></div>)}</div>}
     </section>
     <section className="card"><PanelTitle title="Offline bundles" subtitle={`Same-platform distribution for ${profile || "the installed profile"}.`} />
       <div className="inset bundle-create"><label className="check"><input type="checkbox" checked={includeWeights} onChange={(e) => setIncludeWeights(e.target.checked)} /> Include the complete local model cache</label><p>Bundles always contain pinned application and service images{profile === "metal-arm64" ? " plus the signed Metal agent" : ""}.</p><button onClick={() => run("Create offline bundle", async () => { await completeJob(await api.createBundle(profile, includeWeights ? ["all"] : []), 7_200_000); await refresh(); })}>Create bundle</button></div>
@@ -400,28 +537,32 @@ function Settings({ run }: { run: RunAction }) {
   </div>;
 }
 
-function Home({ openChat }: { openChat: (prompt?: string) => void }) {
-  const [prompt, setPrompt] = useState("");
-  const [status, setStatus] = useState<Status | null>(null);
+function Updates({ run }: { run: RunAction }) {
+  const [updates, setUpdates] = useState<UpdateInfo | null>(null);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const refresh = useCallback(() => api.updates().then((value) => {
+    setUpdates(value);
+    const version = value.release.latest_version || value.release.current_version;
+    setShowWhatsNew(Boolean(value.release.release_url && version && localStorage.getItem(`sovereign-whats-new-${version}`) !== "seen"));
+  }).catch(() => setUpdates(null)), []);
   useEffect(() => {
-    let live = true;
-    const refresh = () => api.status().then((next) => { if (live) setStatus(next); }).catch(() => {});
     refresh();
-    const timer = window.setInterval(refresh, 3000);
-    return () => { live = false; window.clearInterval(timer); };
-  }, []);
-  const modelsReady = status?.runtime.ready && status?.embeddings?.reachable && status?.gateway.healthy;
-  return <div className="portal-home">
-    <span className="eyebrow">Your private AI appliance</span>
-    <h2>What would you like to work on?</h2>
-    <p>Chat, search your knowledge, and manage the whole stack from one place.</p>
-    <div className={`readiness ${modelsReady ? "ready" : "loading"}`}><i />{modelsReady ? "Models ready" : "Portal ready · models are still loading"}</div>
-    <form onSubmit={(event) => { event.preventDefault(); if (prompt.trim()) openChat(prompt.trim()); }}>
-      <input autoFocus value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Sovereign…" />
-      <button disabled={!prompt.trim()}>Send</button>
-    </form>
-    <div className="home-actions"><button className="secondary" onClick={() => openChat()}>Open chat</button><a className="button secondary" href="/embeddings">Configure embeddings</a></div>
-  </div>;
+    const timer = window.setInterval(refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+  const dismissWhatsNew = () => {
+    const version = updates?.release.latest_version || updates?.release.current_version;
+    if (version) localStorage.setItem(`sovereign-whats-new-${version}`, "seen");
+    setShowWhatsNew(false);
+  };
+  return <section className="card update-card"><PanelTitle title="Product updates" subtitle="Release archives are signature-verified. SovereignStack creates a backup first and restores the previous release if validation fails." action={<button className="small secondary" onClick={refresh}>Check again</button>} />
+    {showWhatsNew && updates?.release.release_url && <div className="whats-new"><div><strong>What's new in {updates.release.latest_version || updates.release.current_version}</strong><p>Review the release notes before updating this appliance.</p></div><div className="actions"><a className="button small" href={updates.release.release_url} target="_blank" rel="noreferrer">View release notes</a><button className="small secondary" onClick={dismissWhatsNew}>Dismiss</button></div></div>}
+    <div className="privacy-list"><div><span>Installed version</span><strong>{updates?.release.current_version || "—"}</strong></div><div><span>Latest release</span><strong>{updates?.release.latest_version || "Unavailable"}</strong></div><div><span>Update state</span><StatePill state={updates?.operation.state || "idle"} /></div></div>
+    {updates?.release.check_error && <p className="notice">{updates.release.check_error}</p>}
+    {updates?.operation.message && updates.operation.state !== "idle" && <p className="notice">{updates.operation.message}</p>}
+    {!updates?.release.available && !updates?.release.check_error && <p className="notice">This appliance is up to date.</p>}
+    <div className="actions update-actions">{updates?.release.release_url && <a className="button secondary" href={updates.release.release_url} target="_blank" rel="noreferrer">What's new</a>}{updates?.release.available && updates.release.latest_version && <button onClick={() => run(`Schedule update ${updates.release.latest_version}`, async () => { await api.applyUpdate(updates.release.latest_version!); window.setTimeout(refresh, 2500); })}>Update to {updates.release.latest_version}</button>}</div>
+  </section>;
 }
 
 function EmbeddedApp({ title, src }: { title: string; src: string }) {
@@ -477,14 +618,29 @@ function People({ run }: { run: RunAction }) {
 
 export function Dashboard({ identity, onLogout }: { identity: Identity; onLogout: () => void }) {
   const available = NAV.filter((item) => ROLE_LEVEL[identity.role] >= ROLE_LEVEL[item.minimum]);
-  const pageForPath = () => available.find((item) => item.path === window.location.pathname)?.page ?? available[0].page;
+  const pageForPath = () => {
+    const direct = available.find((item) => item.path === window.location.pathname)?.page;
+    const legacy = LEGACY_PATHS[window.location.pathname];
+    if (direct) return direct;
+    if (legacy && (legacy === "Chat" || ROLE_LEVEL[identity.role] >= ROLE_LEVEL.manager)) return legacy;
+    return "Chat";
+  };
   const [page, setPage] = useState<PortalPage>(pageForPath);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sovereign-sidebar-collapsed") === "true");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [appearance, setAppearance] = useState<"system" | "dark" | "light">(() => (localStorage.getItem("sovereign-appearance") as "system" | "dark" | "light") || "system");
+  const [confirmation, setConfirmation] = useState<({ title: string; message: string; confirmLabel?: string; danger?: boolean; resolve: (value: boolean) => void }) | null>(null);
+  const confirm: ConfirmAction = (options) => new Promise((resolve) => setConfirmation({ ...options, resolve }));
   const run: RunAction = async (label, action) => {
     setBusy(label); setMessage(null);
     try { await action(); setMessage({ tone: "ok", text: `${label} completed.` }); return true; }
-    catch (error) { setMessage({ tone: "bad", text: error instanceof Error ? error.message : String(error) }); return false; }
+    catch (error) {
+      const detail = error instanceof ApiError && error.action ? `${error.message} ${error.action}` : error instanceof Error ? error.message : String(error);
+      setMessage({ tone: "bad", text: detail }); return false;
+    }
     finally { setBusy(""); }
   };
 
@@ -492,39 +648,81 @@ export function Dashboard({ identity, onLogout }: { identity: Identity; onLogout
     const onPopState = () => setPage(pageForPath());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  });
-  const navigate = (path: string) => {
+  }, [available]);
+  useEffect(() => {
+    const refresh = () => api.readiness().then(setReadiness).catch(() => setReadiness(null));
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (appearance === "system") document.documentElement.removeAttribute("data-appearance");
+    else document.documentElement.dataset.appearance = appearance;
+    localStorage.setItem("sovereign-appearance", appearance);
+  }, [appearance]);
+  useEffect(() => {
+    if (!confirmation) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { confirmation.resolve(false); setConfirmation(null); }
+      if (event.key === "Tab") {
+        const controls = Array.from(document.querySelectorAll<HTMLElement>(".modal button:not(:disabled), .modal a[href], .modal input:not(:disabled), .modal select:not(:disabled)"));
+        if (controls.length === 0) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [confirmation]);
+  const navigate = (path: string, explicitPage?: PortalPage) => {
     window.history.pushState({}, "", path);
-    setPage(available.find((item) => item.path === path)?.page ?? "Home");
+    setPage(explicitPage ?? available.find((item) => item.path === path)?.page ?? "Chat");
+    setMobileOpen(false);
   };
-  const openChat = (prompt?: string) => {
-    if (prompt) sessionStorage.setItem("anythingllm_pending_home_message", prompt);
-    navigate("/chat");
+  const setCollapsedState = () => {
+    const next = !collapsed;
+    setCollapsed(next); localStorage.setItem("sovereign-sidebar-collapsed", String(next));
   };
+  const primary = available.filter((item) => item.section === "primary");
+  const admin = available.filter((item) => item.section === "admin");
+  const readinessText = readiness?.overall === "ready" ? "System ready" : readiness ? "Starting services" : "Checking system";
+  const cycleAppearance = () => setAppearance(appearance === "system" ? "dark" : appearance === "dark" ? "light" : "system");
 
-  return <div className="shell">
-    <aside>
-      <div className="brand"><img src={lazarusLogo} alt="Lazarus" /><div><strong>Sovereign</strong><span>Control plane</span></div></div>
-      <nav>{available.map((item) => <button key={item.path} className={page === item.page ? "active" : ""} onClick={() => navigate(item.path)}>{item.page}</button>)}</nav>
-      <div className="aside-foot"><span className="signed-in">{identity.display_name || identity.username}<small>{identity.role}</small></span><button className="signout" onClick={onLogout}>Sign out</button></div>
+  return <div className={`shell ${collapsed ? "sidebar-collapsed" : ""} ${mobileOpen ? "mobile-nav-open" : ""}`}>
+    {mobileOpen && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
+    <aside aria-label="Main navigation">
+      <div className="brand"><img src={lazarusLogo} alt="" /><div><strong>Sovereign</strong><span>Private AI</span></div><button className="collapse-button" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={setCollapsedState}>{collapsed ? "›" : "‹"}</button></div>
+      <nav>
+        <div className="nav-group">{primary.map((item) => <button key={item.path} title={t(`nav.${item.page}`, item.page)} className={page === item.page ? "active" : ""} onClick={() => navigate(item.path)}><span className="nav-icon" aria-hidden="true">{item.page.charAt(0)}</span><span>{t(`nav.${item.page}`, item.page)}</span></button>)}</div>
+        {admin.length > 0 && <div className="nav-group admin-nav"><span className="nav-heading">{t("shell.administration", "Administration")}</span>{admin.map((item) => <button key={item.path} title={t(`nav.${item.page}`, item.page)} className={page === item.page ? "active" : ""} onClick={() => navigate(item.path)}><span className="nav-icon" aria-hidden="true">{item.page.charAt(0)}</span><span>{t(`nav.${item.page}`, item.page)}</span></button>)}</div>}
+      </nav>
+      <div className="aside-foot"><button className="system-chip" onClick={() => navigate("/activity", "Activity")}><i className={readiness?.overall === "ready" ? "ready" : "starting"} /><span>{readinessText}</span></button><span className="signed-in">{identity.display_name || identity.username}<small>{identity.role}</small></span><button className="signout" onClick={onLogout}>{t("shell.signOut", "Sign out")}</button></div>
     </aside>
     <main>
-      <header><div><span className="eyebrow">Sovereign Portal</span><h1>{page}</h1></div><div className="spacer" />{busy && <span className="working"><i />{busy}</span>}</header>
-      {message && <button className={`toast ${message.tone}`} onClick={() => setMessage(null)}>{message.text}<span>×</span></button>}
+      <header><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileOpen(true)}>☰</button><div><span className="eyebrow">Sovereign Portal</span><h1>{t(`nav.${page}`, page)}</h1></div><div className="spacer" />{busy && <span className="working"><i />{busy}</span>}<details className="account-menu"><summary aria-label="Open account menu">{(identity.display_name || identity.username).charAt(0).toUpperCase()}</summary><div className="account-popover"><strong>{identity.display_name || identity.username}</strong><small>{identity.username} · {identity.role}</small><button className="secondary" onClick={cycleAppearance}>Appearance: {appearance}</button><a className="button secondary" href="https://github.com/Lazarus-AI-Research/sovereign-stack/tree/main/docs" target="_blank" rel="noreferrer">Documentation</a><button className="secondary" onClick={onLogout}>{t("shell.signOut", "Sign out")}</button></div></details></header>
+      {message && <div role={message.tone === "bad" ? "alert" : "status"} aria-live={message.tone === "bad" ? "assertive" : "polite"} className={`toast ${message.tone}`}><span>{message.text}</span><button aria-label="Dismiss notification" onClick={() => setMessage(null)}>×</button></div>}
       <div className={`content ${["Chat", "Grafana", "Phoenix"].includes(page) ? "app-content" : ""}`}>
-        {page === "Home" && <Home openChat={openChat} />}
         {page === "Chat" && <EmbeddedApp title="Sovereign Chat" src="/api/control/v1/workspace/sso" />}
-        {page === "Overview" && <Overview run={run} />}
-        {page === "Models" && <Models run={run} />}
+        {page === "Activity" && <Activity canManage={ROLE_LEVEL[identity.role] >= ROLE_LEVEL.manager} run={run} />}
+        {page === "Tools" && <Tools open={(path) => navigate(path)} />}
+        {page === "System" && <Overview run={run} confirm={confirm} />}
+        {page === "Models" && <Models run={run} confirm={confirm} />}
         {page === "Embeddings" && <Knowledge run={run} />}
         {page === "Evaluations" && <Evaluations run={run} />}
         {page === "Grafana" && <EmbeddedApp title="Grafana" src="/apps/grafana/" />}
         {page === "Phoenix" && <EmbeddedApp title="Phoenix" src="/apps/phoenix/" />}
         {page === "People" && <People run={run} />}
-        {page === "Access" && <Access run={run} />}
-        {page === "Resilience" && <Resilience run={run} />}
+        {page === "API & Providers" && <Access run={run} confirm={confirm} />}
+        {page === "Network Access" && <NetworkAccess run={run} />}
+        {page === "Backups & Recovery" && <Resilience run={run} confirm={confirm} />}
+        {page === "Updates" && <Updates run={run} />}
         {page === "Settings" && <Settings run={run} />}
       </div>
     </main>
+    {confirmation && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { confirmation.resolve(false); setConfirmation(null); } }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="confirmation-title">
+      <h2 id="confirmation-title">{confirmation.title}</h2><p>{confirmation.message}</p><div className="modal-actions"><button className="secondary" onClick={() => { confirmation.resolve(false); setConfirmation(null); }}>Cancel</button><button autoFocus className={confirmation.danger ? "danger" : ""} onClick={() => { confirmation.resolve(true); setConfirmation(null); }}>{confirmation.confirmLabel || "Continue"}</button></div>
+    </section></div>}
   </div>;
 }

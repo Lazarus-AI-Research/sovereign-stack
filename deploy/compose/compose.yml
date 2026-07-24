@@ -60,6 +60,8 @@ services:
       - ${SOVEREIGN_RELEASE_ROOT:-.}:/sovereign-release:ro
     expose:
       - "8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - sovereign
 
