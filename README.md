@@ -6,7 +6,7 @@ operator control plane, an OpenAI-compatible model gateway, local inference,
 vector search, evaluations, observability, and backups in one managed stack.
 
 The current public preview is
-[`v0.1.0-rc.3`](https://github.com/Lazarus-AI-Research/sovereign-stack/releases/tag/v0.1.0-rc.3).
+[`v0.1.0-rc.4`](https://github.com/Lazarus-AI-Research/sovereign-stack/releases/tag/v0.1.0-rc.4).
 It supports Apple Silicon Macs and Ubuntu NVIDIA CUDA hosts.
 Release-candidate users should pin both the installer URL and
 `SOVEREIGN_VERSION` exactly as shown below.
@@ -54,8 +54,8 @@ continue loading. It opens the one-time first-administrator setup page in the
 default browser and completes runtime smoke tests in the background.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.3 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.4 bash
 ```
 
 The first run can take a while because it downloads a pinned signature verifier,
@@ -69,12 +69,12 @@ To choose a profile explicitly:
 
 ```bash
 # Apple Silicon
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --profile metal-arm64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --profile metal-arm64
 
 # Ubuntu NVIDIA CUDA
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --profile cuda-x86_64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --profile cuda-x86_64
 ```
 
 When installing over SSH, the installer selects private-LAN access and prints
@@ -83,16 +83,16 @@ also choose access explicitly:
 
 ```bash
 # Local desktop
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --access desktop
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --access desktop
 
 # Headless/private network
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --access lan
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --access lan
 
 # Public domain with automatic HTTPS
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.3/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.3 bash -s -- --domain ai.example.com
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.4/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.4 bash -s -- --domain ai.example.com
 ```
 
 The default install locations are:
@@ -394,7 +394,7 @@ credentials, models, databases, reports, backups, and Docker volumes are
 preserved.
 
 ```bash
-VERSION=0.1.0-rc.3
+VERSION=0.1.0-rc.4
 curl -fsSL "https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v${VERSION}/deploy/scripts/install.sh" \
   | SOVEREIGN_VERSION="$VERSION" bash
 ```

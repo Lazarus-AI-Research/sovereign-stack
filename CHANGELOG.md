@@ -4,6 +4,8 @@ All notable changes to Sovereign Stack are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-rc.4] - 2026-07-24
+
 - Replaced the runtime-hosted embedding models with the pinned
   `embeddinggemma.c` v0.3.1 service and EmbeddingGemma Q4 GGUF on both
   certified profiles.
@@ -11,6 +13,13 @@ All notable changes to Sovereign Stack are documented in this file.
   Metal host service while retaining the product's OpenAI embedding route.
 - Added an upgrade migration that preserves unrelated generation and remote
   model configuration, with one-time backups of changed embedding config.
+- Added a unified, responsive Control Portal for chat, activity, tools,
+  system health, models, networking, updates, recovery, and administration.
+- Added guided hardware-aware onboarding, curated model recommendations, and
+  observable background operations with progress, cancellation, and retry.
+- Added portal-first installation and an authenticated host lifecycle service
+  for safe access-mode changes, repair, updates, and support diagnostics.
+- Added signed native Linux and notarized macOS installer packaging workflows.
 
 ## [0.1.0-rc.3] - 2026-07-15
 

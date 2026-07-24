@@ -3,7 +3,7 @@
 # starts the appliance; host drivers and container tooling remain prerequisites.
 set -Eeuo pipefail
 
-DEFAULT_VERSION="0.1.0-rc.3"
+DEFAULT_VERSION="0.1.0-rc.4"
 VERSION="${SOVEREIGN_VERSION:-$DEFAULT_VERSION}"
 VERSION="${VERSION#v}"
 SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
