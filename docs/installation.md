@@ -25,26 +25,32 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 
 The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
-owner-only credentials, pulls digest-pinned images from the signed release
-manifest, starts the stack, waits for both
-the generation runtime and embedding service, and runs the smoke suite. A Hugging Face token is only needed
+owner-only appliance secrets, pulls digest-pinned images from the signed
+release manifest, starts the portal, opens the first-admin claim page, then
+waits for the generation runtime and embedding service and runs the smoke suite. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.
 
 The appliance is installed under `~/.sovereign`; the management command is
 placed at `~/.local/bin/sovereign`. Add that directory to `PATH` if needed.
-The default URLs are:
+The default portal is `http://127.0.0.1:8880/`. Run `sovereign open` instead of
+memorizing it. The first user chooses the administrator username and password
+through a single-use, 30-minute setup link; `sovereign admin setup-link`
+replaces an expired link.
 
-- Workspace: `http://127.0.0.1:8880/`
-- Control: `http://127.0.0.1:8880/control/`
+To use the portal from other devices:
 
-The generated administrator password is in `~/.sovereign/credentials` with
-mode `0600`.
+```bash
+sovereign access lan                       # trusted RFC1918 network
+sovereign access domain ai.example.com     # public hostname, automatic TLS
+sovereign url                              # print the current address
+```
 
 ## Common operations
 
 ```bash
 sovereign status
+sovereign open
 sovereign logs -f sovereign-runtime
 sovereign smoke
 sovereign down

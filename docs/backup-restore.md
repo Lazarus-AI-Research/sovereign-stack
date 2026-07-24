@@ -4,7 +4,7 @@ Normal backups contain PostgreSQL databases (`sovereign_control`, `litellm`,
 `workspace`, `phoenix`, and `vectors`) plus product config and branding. They
 exclude model weights, Hugging Face caches, compilation caches, `.env`, the
 vault key, agent token, gateway configuration containing provider secrets, and
-generated credentials.
+first-admin claim material.
 
 Create and verify from the CLI:
 

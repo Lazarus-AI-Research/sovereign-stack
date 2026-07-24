@@ -42,9 +42,9 @@ images: ## Build application images (context: repo root)
 	docker build -f embeddinggemma/Dockerfile.cuda -t $(REGISTRY)/sovereign-embeddings:$(VERSION) .
 
 compose-validate: ## Validate the Compose configuration
-	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml config -q
-	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.cuda.yml config -q
-	docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
+	SOVEREIGN_ENV_FILE=.env.example docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml config -q
+	SOVEREIGN_ENV_FILE=.env.example docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.cuda.yml config -q
+	SOVEREIGN_ENV_FILE=.env.example docker compose --env-file deploy/.env.example --project-directory deploy -f deploy/compose/compose.yml -f deploy/compose/compose.runtime.metal.yml config -q
 	@echo "compose configuration valid"
 
 clean: ## Remove build artifacts

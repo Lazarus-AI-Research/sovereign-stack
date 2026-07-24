@@ -11,12 +11,14 @@ import (
 // profile describes that model and probes the already-running service. Prefix
 // and index identity changes still flow through the normal rebuild process.
 type ActivateDeps struct {
-	Registry *Registry
-	Service  *Client
+	Registry  *Registry
+	Service   *Client // retained for original callers
+	Providers map[string]Prober
 }
 
 type ActivatePayload struct {
-	ProfileID string `json:"profile_id"`
+	ProfileID      string `json:"profile_id"`
+	InitializeOnly bool   `json:"initialize_only,omitempty"`
 }
 
 func (d ActivateDeps) HandleActivate(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -28,13 +30,14 @@ func (d ActivateDeps) HandleActivate(ctx context.Context, payload json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	if profile.Provider != "embeddinggemma" || profile.Model != EmbeddingGemmaModel {
-		return nil, fmt.Errorf("profile %q is not compatible with the embeddinggemma backend", request.ProfileID)
+	provider := d.Providers[profile.Provider]
+	if provider == nil && profile.Provider == "embeddinggemma" {
+		provider = d.Service
 	}
-	if d.Service == nil {
-		return nil, fmt.Errorf("embedding service is unavailable")
+	if provider == nil {
+		return nil, fmt.Errorf("embedding provider %q is unavailable", profile.Provider)
 	}
-	dimensions, err := d.Service.Probe(ctx, profile.ServedModelName)
+	dimensions, err := provider.Probe(ctx, profile.ServedModelName)
 	if err != nil {
 		return map[string]any{"state": "unhealthy", "profile": request.ProfileID}, err
 	}

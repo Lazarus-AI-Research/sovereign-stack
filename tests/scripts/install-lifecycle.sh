@@ -23,10 +23,37 @@ if SOVEREIGN_TEST_DOCKER_OWNER=/another/install \
   exit 1
 fi
 grep -q "belongs to another SovereignStack installation" "$TEST_HOME/takeover.log"
-for file in .env credentials agent.token secrets/control-vault.key; do
+for file in .env agent.token secrets/control-vault.key; do
   mode="$(if stat -f %Lp "$TEST_HOME/$file" >/dev/null 2>&1; then stat -f %Lp "$TEST_HOME/$file"; else stat -c %a "$TEST_HOME/$file"; fi)"
   [[ "$mode" == 600 ]] || { echo "$file mode is $mode, expected 600" >&2; exit 1; }
 done
+[[ ! -e "$TEST_HOME/credentials" ]] || { echo "legacy generated credentials file should not exist" >&2; exit 1; }
+[[ "$(SOVEREIGN_HOME="$TEST_HOME" "$TEST_HOME/bin/sovereign" url)" == "http://127.0.0.1:8880/" ]]
+grep -qx 'SOVEREIGN_ACCESS_MODE=desktop' "$TEST_HOME/.env"
+grep -qx 'SOVEREIGN_PUBLIC_URL=http://127.0.0.1:8880' "$TEST_HOME/.env"
+
+# Noninteractive installs can select a TLS domain directly; unsafe public HTTP
+# remains impossible without the explicit acknowledgement value.
+DOMAIN_HOME="$TEST_HOME/domain-config"
+SOVEREIGN_HOME="$DOMAIN_HOME" \
+SOVEREIGN_PROFILE=metal-arm64 \
+SOVEREIGN_ACCESS_MODE=domain \
+SOVEREIGN_SITE_ADDRESS=ai.example.test \
+SOVEREIGN_RELEASE_ROOT="$TEST_HOME/current" \
+  "$ROOT/deploy/scripts/generate-config.sh"
+grep -qx 'SOVEREIGN_BIND_ADDRESS=0.0.0.0' "$DOMAIN_HOME/.env"
+grep -qx 'HTTP_PORT=80' "$DOMAIN_HOME/.env"
+grep -qx 'HTTPS_PORT=443' "$DOMAIN_HOME/.env"
+grep -qx 'SOVEREIGN_PUBLIC_URL=https://ai.example.test' "$DOMAIN_HOME/.env"
+if SOVEREIGN_HOME="$TEST_HOME/rejected-wan" \
+  SOVEREIGN_PROFILE=metal-arm64 \
+  SOVEREIGN_ACCESS_MODE=wan-http \
+  SOVEREIGN_PUBLIC_URL=http://203.0.113.10:8880 \
+  SOVEREIGN_RELEASE_ROOT="$TEST_HOME/current" \
+  "$ROOT/deploy/scripts/generate-config.sh" >/dev/null 2>&1; then
+  echo "generate-config accepted public cleartext HTTP without acknowledgement" >&2
+  exit 1
+fi
 grep -Eq '^SOVEREIGN_HOST_UID=[0-9]+$' "$TEST_HOME/.env"
 grep -Eq '^SOVEREIGN_HOST_GID=[0-9]+$' "$TEST_HOME/.env"
 [[ "$(readlink "$TEST_HOME/current")" == "$TEST_HOME/releases/$VERSION" ]]

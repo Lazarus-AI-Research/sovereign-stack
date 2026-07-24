@@ -66,10 +66,9 @@
     },
     "roles": {
       "type": "object",
-      "description": "Required roles per \u00a79.2: generation and embedding. Optional roles: vision, audio, rerank.",
+      "description": "Generation is required. Embedding is optional because the default stack uses the dedicated EmbeddingGemma service.",
       "required": [
-        "generation",
-        "embedding"
+        "generation"
       ],
       "additionalProperties": false,
       "properties": {

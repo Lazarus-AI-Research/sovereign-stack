@@ -24,6 +24,7 @@ const idPath = (id: string) => encodeURIComponent(id);
 export interface Status {
   control: { status: string; version: string };
   runtime: { reachable: boolean; state?: string; ready?: boolean; required_roles?: Record<string, boolean> };
+  embeddings?: { reachable: boolean; backend?: string; profile_id?: string; served_model_name?: string };
   gateway: { healthy: boolean };
   docker_proxy: { reachable: boolean; docker?: string };
   services?: Record<string, string>;
@@ -79,6 +80,32 @@ export interface EmbeddingProfile {
   chunking_strategy: string;
   preprocessing_version: string;
   modalities: string[];
+  model_entry_id?: string;
+}
+
+export interface Identity {
+  id: number;
+  username: string;
+  display_name: string;
+  role: "admin" | "manager" | "member";
+  disabled: boolean;
+  workspace_ids: string[];
+}
+
+export interface Invitation {
+  id: string;
+  role: Identity["role"];
+  workspace_ids: string[];
+  created_at: string;
+  expires_at: string;
+}
+
+export interface EmbeddingState {
+  profile_id: string;
+  provider: string;
+  served_model_name: string;
+  dimensions: number;
+  activated_at: string;
 }
 
 export interface IndexVersion {
@@ -165,7 +192,13 @@ export interface Features {
 export const api = {
   login: (username: string, password: string) => request<{ token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   logout: () => request<unknown>("/auth/logout", { method: "POST" }),
-  me: () => request<{ username: string }>("/auth/me"),
+  me: () => request<Identity>("/auth/me"),
+  claim: (token: string, value: { username: string; display_name: string; password: string }) => request<Identity>(`/auth/claim/${idPath(token)}`, { method: "POST", body: JSON.stringify(value) }),
+  invitation: (token: string) => request<Invitation>(`/auth/invitations/${idPath(token)}`),
+  acceptInvitation: (token: string, value: { username: string; display_name: string; password: string }) => request<Identity>(`/auth/invitations/${idPath(token)}`, { method: "POST", body: JSON.stringify(value) }),
+  users: () => request<{ users: Identity[] }>("/users"),
+  updateUser: (id: number, value: { role: Identity["role"]; disabled: boolean; workspace_ids: string[] }) => request<Identity>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(value) }),
+  createInvitation: (value: { role: Identity["role"]; workspace_ids: string[] }) => request<{ invitation: Invitation; token: string; path: string }>("/invitations", { method: "POST", body: JSON.stringify(value) }),
   status: () => request<Status>("/status"),
   manifest: () => request<Manifest>("/runtime/manifest"),
   runtimeErrors: () => request<RuntimeErrors>("/runtime/errors"),
@@ -178,6 +211,8 @@ export const api = {
   smokeModel: (id: string) => request<{ job_id: string }>(`/models/${idPath(id)}/smoke-test`, { method: "POST" }),
 
   embeddingProfiles: () => request<{ embedding_profiles: Record<string, EmbeddingProfile> }>("/embedding-profiles"),
+  embeddingState: () => request<{ active: EmbeddingState | null }>("/embedding-state"),
+  createEmbeddingProfile: (id: string, profile: EmbeddingProfile) => request<unknown>("/embedding-profiles", { method: "POST", body: JSON.stringify({ id, ...profile }) }),
   activateProfile: (id: string) => request<{ job_id: string }>(`/embedding-profiles/${idPath(id)}/activate`, { method: "POST" }),
   validateProfile: (id: string) => request<Record<string, unknown>>(`/embedding-profiles/${idPath(id)}/validate`, { method: "POST" }),
   indexes: () => request<{ indexes: IndexVersion[] }>("/indexes"),

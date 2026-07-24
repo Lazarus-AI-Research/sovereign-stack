@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -27,7 +28,10 @@ type LoadDeps struct {
 }
 
 type LoadPayload struct {
-	ModelID string `json:"model_id"`
+	ModelID         string `json:"model_id"`
+	ServedModelName string `json:"served_model_name,omitempty"`
+	Pooling         string `json:"pooling,omitempty"`
+	Normalization   string `json:"normalization,omitempty"`
 }
 
 func (d LoadDeps) HandleLoad(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -35,25 +39,116 @@ func (d LoadDeps) HandleLoad(ctx context.Context, payload json.RawMessage) (any,
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, fmt.Errorf("bad payload: %w", err)
 	}
+	return d.Load(ctx, request)
+}
+
+// Load applies a registry entry to one runtime role. If the candidate cannot
+// become ready, both the managed configuration and the prior runtime are
+// restored before the error is returned.
+func (d LoadDeps) Load(ctx context.Context, request LoadPayload) (any, error) {
 	entry, err := d.Registry.Get(request.ModelID)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.rewriteRole(entry); err != nil {
+	previous, err := os.ReadFile(d.ConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("runtime config: %w", err)
+	}
+	if err := d.rewriteRole(entry, request); err != nil {
 		return nil, err
 	}
 	if err := d.Proxy.Restart(ctx, "sovereign-runtime"); err != nil {
+		if rollbackErr := d.rollback(previous); rollbackErr != nil {
+			return nil, fmt.Errorf("runtime restart: %w; rollback: %v", err, rollbackErr)
+		}
 		return nil, fmt.Errorf("runtime restart: %w", err)
 	}
-
-	timeout := d.ReadyTimeout
-	if timeout == 0 {
-		timeout = 5 * time.Minute
+	result, err := d.waitReady(ctx, entry)
+	if err == nil {
+		return result, nil
 	}
+	if rollbackErr := d.rollback(previous); rollbackErr != nil {
+		return result, fmt.Errorf("%w; rollback: %v", err, rollbackErr)
+	}
+	return result, err
+}
+
+// DisableRole removes an optional role from runtime resource allocation while
+// retaining its last known configuration for a future re-enable.
+func (d LoadDeps) DisableRole(ctx context.Context, name string) error {
+	if name == "generation" {
+		return fmt.Errorf("generation is required and cannot be disabled")
+	}
+	previous, err := os.ReadFile(d.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("runtime config: %w", err)
+	}
+	var config map[string]any
+	if err := yaml.Unmarshal(previous, &config); err != nil {
+		return fmt.Errorf("runtime config: %w", err)
+	}
+	roles, _ := config["roles"].(map[string]any)
+	if roles == nil {
+		return fmt.Errorf("runtime config has no roles section")
+	}
+	role, _ := roles[name].(map[string]any)
+	if role == nil || role["enabled"] == false {
+		return nil
+	}
+	role["enabled"] = false
+	roles[name] = role
+	if err := d.writeConfig(config); err != nil {
+		return err
+	}
+	if err := d.Proxy.Restart(ctx, "sovereign-runtime"); err != nil {
+		if rollbackErr := d.rollback(previous); rollbackErr != nil {
+			return fmt.Errorf("runtime restart: %w; rollback: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("runtime restart: %w", err)
+	}
+	_, err = d.waitReady(ctx, Entry{Role: name})
+	if err == nil {
+		return nil
+	}
+	if rollbackErr := d.rollback(previous); rollbackErr != nil {
+		return fmt.Errorf("%w; rollback: %v", err, rollbackErr)
+	}
+	return err
+}
+
+func (d LoadDeps) rollback(previous []byte) error {
+	if err := d.restore(previous); err != nil {
+		return fmt.Errorf("restore runtime configuration: %w", err)
+	}
+	if err := d.Proxy.Restart(context.Background(), "sovereign-runtime"); err != nil {
+		return fmt.Errorf("restart restored runtime: %w", err)
+	}
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), d.timeout())
+	defer cancel()
+	if _, err := d.waitReady(rollbackCtx, Entry{Role: "rollback"}); err != nil {
+		return fmt.Errorf("restored runtime readiness: %w", err)
+	}
+	return nil
+}
+
+func (d LoadDeps) timeout() time.Duration {
+	if d.ReadyTimeout > 0 {
+		return d.ReadyTimeout
+	}
+	return 5 * time.Minute
+}
+
+func (d LoadDeps) waitReady(ctx context.Context, entry Entry) (map[string]any, error) {
+
+	timeout := d.timeout()
 	deadline := time.Now().Add(timeout)
 	var last runtime.Readiness
 	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return map[string]any{"state": last.State, "model": entry.Model, "role": entry.Role}, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 		ready, err := d.Runtime.Ready(ctx)
 		if err != nil {
 			continue // restarting
@@ -73,7 +168,7 @@ func (d LoadDeps) HandleLoad(ctx context.Context, payload json.RawMessage) (any,
 
 // rewriteRole updates the active runtime config file. Comments are not
 // preserved: the file is managed by Sovereign Control once installed.
-func (d LoadDeps) rewriteRole(entry Entry) error {
+func (d LoadDeps) rewriteRole(entry Entry, request LoadPayload) error {
 	raw, err := os.ReadFile(d.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("runtime config: %w", err)
@@ -91,7 +186,11 @@ func (d LoadDeps) rewriteRole(entry Entry) error {
 		role = map[string]any{}
 	}
 	role["enabled"] = true
-	role["source"] = entry.Source
+	source := entry.Source
+	if source == "offline" {
+		source = "local"
+	}
+	role["source"] = source
 	role["model"] = entry.Model
 	if entry.Revision != "" {
 		role["revision"] = entry.Revision
@@ -100,14 +199,52 @@ func (d LoadDeps) rewriteRole(entry Entry) error {
 		role["task"] = "generate"
 	} else if entry.Role == "embedding" {
 		role["task"] = "embed"
+		if request.Pooling != "" {
+			role["pooling"] = request.Pooling
+		}
+		if request.Normalization != "" {
+			role["normalization"] = request.Normalization
+		}
+	}
+	if request.ServedModelName != "" {
+		role["served_model_name"] = request.ServedModelName
 	}
 	roles[entry.Role] = role
 	config["roles"] = roles
 
+	return d.writeConfig(config)
+}
+
+func (d LoadDeps) writeConfig(config map[string]any) error {
 	updated, err := yaml.Marshal(config)
 	if err != nil {
 		return err
 	}
 	header := "# Sovereign Runtime configuration — managed by Sovereign Control.\n# Validated against schemas/runtime-config.schema.json.\n"
-	return os.WriteFile(d.ConfigPath, append([]byte(header), updated...), 0o644)
+	return d.restore(append([]byte(header), updated...))
+}
+
+func (d LoadDeps) restore(raw []byte) error {
+	temporary, err := os.CreateTemp(filepath.Dir(d.ConfigPath), ".runtime-*.yaml")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(raw); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, d.ConfigPath)
 }

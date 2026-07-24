@@ -17,8 +17,8 @@
       "required": ["provider", "source", "model", "revision", "served_model_name", "normalization", "distance_metric", "preprocessing_version", "modalities"],
       "additionalProperties": false,
       "properties": {
-        "provider": { "type": "string", "minLength": 1 },
-        "source": { "enum": ["huggingface", "modelscope", "local", "offline"] },
+        "provider": { "enum": ["embeddinggemma", "sovereign-runtime", "openai-compatible"] },
+        "source": { "enum": ["huggingface", "modelscope", "local", "offline", "remote", "cloud"] },
         "model": { "type": "string", "minLength": 1 },
         "revision": { "type": "string", "minLength": 1 },
         "artifact": { "type": "string" },
@@ -36,7 +36,8 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": { "enum": ["text", "image", "audio", "video"] }
-        }
+        },
+        "model_entry_id": { "type": "string", "minLength": 1 }
       }
     }
   }

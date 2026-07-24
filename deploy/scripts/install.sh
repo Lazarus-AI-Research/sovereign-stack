@@ -341,5 +341,7 @@ fi
 
 echo
 echo "SovereignStack $VERSION installed for $PROFILE"
-echo "URL: http://127.0.0.1:${SOVEREIGN_HTTP_PORT:-8880}/"
-echo "Credentials: $SOVEREIGN_HOME/credentials"
+echo "Portal: $(SOVEREIGN_HOME="$SOVEREIGN_HOME" "$BIN_DIR/sovereign" url)"
+echo "Open it any time with: sovereign open"
+echo "For another computer: sovereign access lan, or sovereign access domain your-hostname.example"
+echo "If the first-admin link expires: sovereign admin setup-link"

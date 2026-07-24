@@ -4,14 +4,24 @@ package indexes
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/database"
+	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/embeddings"
+	workspaceapi "github.com/Lazarus-AI-Research/sovereign-stack/control/internal/workspace"
 )
 
 const workspace = "11111111-1111-1111-1111-111111111111"
+
+type dimensionsProber int
+
+func (p dimensionsProber) Probe(context.Context, string) (int, error) { return int(p), nil }
 
 func testStore(t *testing.T) (context.Context, *Store) {
 	t.Helper()
@@ -68,6 +78,8 @@ func TestActivateIsAtomicPerWorkspace(t *testing.T) {
 	second := create(t, ctx, store, "gemma-reduced")
 	store.Progress(ctx, first.ID, 1, 1, 1)
 	store.Progress(ctx, second.ID, 1, 1, 1)
+	store.SetStatus(ctx, first.ID, "validating")
+	store.SetStatus(ctx, second.ID, "validating")
 
 	if _, err := store.Activate(ctx, first.ID); err != nil {
 		t.Fatalf("activate first: %v", err)
@@ -104,6 +116,7 @@ func TestActiveVersionCannotBeDeleted(t *testing.T) {
 	ctx, store := testStore(t)
 	version := create(t, ctx, store, "gemma-default")
 	store.Progress(ctx, version.ID, 1, 1, 1)
+	store.SetStatus(ctx, version.ID, "validating")
 	if _, err := store.Activate(ctx, version.ID); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
@@ -112,8 +125,59 @@ func TestActiveVersionCannotBeDeleted(t *testing.T) {
 	}
 	replacement := create(t, ctx, store, "gemma-reduced")
 	store.Progress(ctx, replacement.ID, 1, 1, 1)
+	store.SetStatus(ctx, replacement.ID, "validating")
 	store.Activate(ctx, replacement.ID)
 	if err := store.Delete(ctx, version.ID); err != nil {
 		t.Fatalf("delete inactive: %v", err)
+	}
+}
+
+func TestGlobalActivationIncludesUnboundWorkspaces(t *testing.T) {
+	ctx, store := testStore(t)
+	profiles := embeddings.NewRegistry(filepath.Join(t.TempDir(), "profiles.yaml"))
+	profile := embeddings.Profile{
+		Provider: "embeddinggemma", Source: "huggingface", Model: embeddings.EmbeddingGemmaModel,
+		Revision: "0123456789012345678901234567890123456789", ServedModelName: "embedding-gemma-default",
+		Pooling: "mean", Normalization: "l2", DistanceMetric: "cosine",
+		ChunkingStrategy: "recursive-v1", PreprocessingVersion: "test-v1", Modalities: []string{"text"},
+	}
+	if err := profiles.Put("gemma-default", profile); err != nil {
+		t.Fatal(err)
+	}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/indexes/workspaces":
+			json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{{
+				"id": workspace, "upstream_id": 1, "name": "Default", "slug": "default",
+			}}})
+		case "/internal/indexes/rebuild":
+			json.NewEncoder(w).Encode(map[string]any{
+				"workspace_slug": "default", "document_count": 0, "processed_documents": 0,
+				"vector_count": 0, "failures": []string{},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer provider.Close()
+	workspaceClient := workspaceapi.NewWithIndexAdmin(provider.URL, provider.URL, "test")
+	activator := embeddings.ActivateDeps{
+		Registry: profiles, Providers: map[string]embeddings.Prober{"embeddinggemma": dimensionsProber(768)},
+	}
+	rebuilder := RebuildDeps{Store: store, Profiles: profiles, Activator: activator, Workspace: workspaceClient}
+	deps := GlobalActivationDeps{
+		Store: store, Profiles: profiles, Activator: activator, Rebuilder: rebuilder, Workspace: workspaceClient,
+	}
+	payload, _ := json.Marshal(embeddings.ActivatePayload{ProfileID: "gemma-default"})
+	if _, err := deps.Handle(ctx, payload); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.EmbeddingState(ctx)
+	if err != nil || state.ProfileID != "gemma-default" || state.Dimensions != 768 {
+		t.Fatalf("embedding state: %+v %v", state, err)
+	}
+	active, err := store.Active(ctx, workspace)
+	if err != nil || active.ProviderSlug != "default" || active.Status != "active" {
+		t.Fatalf("active workspace index: %+v %v", active, err)
 	}
 }

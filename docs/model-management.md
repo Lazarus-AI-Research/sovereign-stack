@@ -6,11 +6,12 @@ for OpenAI, Anthropic, and Gemini. Catalog models require immutable revisions;
 local release defaults also carry artifact checksums where a discrete file is
 used.
 
-Use **Models** in Control to register, load, test, or remove generation routes.
+Use **Models** in the portal to register, load, test, or remove generation routes.
 Local generation model loads rewrite `runtime.yaml`, restart only the runtime
 through the restricted proxy, wait for readiness, and require a smoke test.
-The fixed local embedding model is managed under **Knowledge**, not loaded into
-vLLM. Remote/cloud entries
+The built-in embedding model is managed under **Embeddings**, not loaded into
+vLLM. Specialized embedding entries can be selected there to enable the
+runtime's optional embedding role or an OpenAI-compatible provider. Remote/cloud entries
 regenerate the private LiteLLM configuration and restart the gateway without
 changing the runtime.
 

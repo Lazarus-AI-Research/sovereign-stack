@@ -38,6 +38,7 @@ func NewWithIndexAdmin(baseURL, adminBase, token string) *Client {
 type RebuildRequest struct {
 	WorkspaceSlug    string `json:"workspace_slug"`
 	IndexVersion     string `json:"index_version"`
+	ServedModelName  string `json:"served_model_name"`
 	QueryPrefix      string `json:"query_prefix,omitempty"`
 	DocumentPrefix   string `json:"document_prefix,omitempty"`
 	PreprocessingVer string `json:"preprocessing_version"`
@@ -57,6 +58,51 @@ type Workspace struct {
 	UpstreamID int    `json:"upstream_id"`
 	Name       string `json:"name"`
 	Slug       string `json:"slug"`
+}
+
+type SessionRequest struct {
+	Username       string   `json:"username"`
+	Role           string   `json:"role"`
+	Suspended      bool     `json:"suspended"`
+	WorkspaceSlugs []string `json:"workspace_slugs"`
+}
+
+// Session synchronizes a Control identity into AnythingLLM and returns its
+// single-use Simple SSO login path. Passwords never cross this boundary.
+func (c *Client) Session(ctx context.Context, request SessionRequest) (string, error) {
+	if c.adminBase == "" || c.adminToken == "" {
+		return "", fmt.Errorf("workspace identity administration is not configured")
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.adminBase+"/internal/identity/session", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("workspace identity session: %s: %s", resp.Status, raw)
+	}
+	var result struct {
+		LoginPath string `json:"login_path"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.LoginPath == "" {
+		return "", fmt.Errorf("workspace identity session returned no login path")
+	}
+	return result.LoginPath, nil
 }
 
 func (c *Client) Workspaces(ctx context.Context) ([]Workspace, error) {

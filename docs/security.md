@@ -1,16 +1,19 @@
 # Security
 
-v0.1 is a single-host, localhost-only appliance. Caddy binds to
-`127.0.0.1:8880`; operators who intentionally expose it must place an
-authenticated TLS reverse proxy in front. All other services are private to
-the Compose network.
+The default mode is single-host: Caddy binds to `127.0.0.1:8880`. The host CLI
+can bind the same authenticated portal to an RFC1918 address, or configure a
+public hostname with Caddy-managed TLS. Public cleartext HTTP is rejected
+unless the operator supplies an explicit insecure-transport acknowledgement.
+All other services remain private to the Compose network.
 
-Control uses an administrator session cookie (`HttpOnly`, `SameSite=Lax`) or a
-bearer session token. Generated credentials, the LiteLLM config, agent token,
+Control owns multi-user identity with administrator, manager, and member roles.
+It uses a session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` under TLS) or a
+bearer session token. The owner-only first-admin claim, LiteLLM config, agent token,
 and vault key are owner-readable only. Provider credentials are encrypted with
 AES-256-GCM using a random nonce and record-bound additional authenticated
 data. Secret values are accepted on write and never returned by the API.
-Control runs as the installing host UID/GID so it can read those owner-only
+Workspace identities and memberships are mirrored through one-time SSO;
+passwords are never shared with Workspace. Control runs as the installing host UID/GID so it can read those owner-only
 bind-mounted files without running the container as root.
 
 Control never mounts the Docker socket. A dedicated proxy owns it and enforces:

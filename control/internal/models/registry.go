@@ -1,6 +1,6 @@
 // Package models manages the model registry (design.md §2.9, §18.5) and local
-// generation-model loading. The dedicated embedding service is managed through
-// embedding profiles instead of rewriting the runtime configuration.
+// runtime loading. EmbeddingGemma is the default service; embedding registry
+// entries become an optional runtime role only through global profile activation.
 package models
 
 import (

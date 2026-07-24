@@ -24,7 +24,72 @@ compose() {
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed 's/^"//;s/"$//'; }
 HTTP_PORT="$(env_value HTTP_PORT)"
 HTTP_PORT="${HTTP_PORT:-8880}"
-BASE_URL="http://127.0.0.1:$HTTP_PORT"
+HTTPS_PORT="$(env_value HTTPS_PORT)"
+HTTPS_PORT="${HTTPS_PORT:-8443}"
+OPERATOR_TOKEN="$(env_value SOVEREIGN_OPERATOR_TOKEN)"
+CURRENT_ACCESS_MODE="$(env_value SOVEREIGN_ACCESS_MODE)"
+CURRENT_ACCESS_MODE="${CURRENT_ACCESS_MODE:-desktop}"
+
+portal_url() {
+  local configured mode address
+  configured="$(env_value SOVEREIGN_PUBLIC_URL)"
+  [[ -n "$configured" ]] && { printf '%s' "${configured%/}"; return; }
+  mode="$(env_value SOVEREIGN_ACCESS_MODE)"
+  address="$(env_value SOVEREIGN_BIND_ADDRESS)"
+  case "${mode:-desktop}" in
+    domain) printf 'https://%s' "$(env_value SOVEREIGN_SITE_ADDRESS)" ;;
+    lan|wan-http) printf 'http://%s:%s' "${address:-127.0.0.1}" "$HTTP_PORT" ;;
+    *) printf 'http://127.0.0.1:%s' "$HTTP_PORT" ;;
+  esac
+}
+BASE_URL="$(portal_url)"
+
+set_env_value() {
+  local key="$1" value="$2" temporary
+  temporary="$ENV_FILE.tmp.$$"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { found=0 }
+    index($0, key "=")==1 { print key "=" value; found=1; next }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$ENV_FILE" > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
+}
+
+is_private_ipv4() {
+  printf '%s\n' "$1" | awk -F. '
+    NF==4 && $1==10 { ok=1 }
+    NF==4 && $1==192 && $2==168 { ok=1 }
+    NF==4 && $1==172 && $2>=16 && $2<=31 { ok=1 }
+    END { exit !ok }
+  '
+}
+
+discover_private_ipv4() {
+  local candidates address
+  if command -v hostname >/dev/null 2>&1; then candidates="$(hostname -I 2>/dev/null || true)"; fi
+  if [[ -z "${candidates:-}" ]] && command -v ipconfig >/dev/null 2>&1; then
+    candidates="$(ipconfig getifaddr en0 2>/dev/null || true) $(ipconfig getifaddr en1 2>/dev/null || true)"
+  fi
+  for address in $candidates; do
+    is_private_ipv4 "$address" && { printf '%s' "$address"; return 0; }
+  done
+  return 1
+}
+
+open_url() {
+  local url="$1"
+  [[ "${SOVEREIGN_NO_OPEN:-0}" != 1 ]] || return 0
+  if command -v open >/dev/null 2>&1; then open "$url" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then xdg-open "$url" >/dev/null 2>&1 || true
+  elif command -v cmd.exe >/dev/null 2>&1; then cmd.exe /c start "" "$url" >/dev/null 2>&1 || true
+  fi
+}
+
+operator_curl() {
+  curl -fsS -H "X-Sovereign-Operator-Token: $OPERATOR_TOKEN" "$@"
+}
 
 ensure_project_owner() {
   local container owner expected
@@ -71,9 +136,46 @@ stop_metal_embeddings() {
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 }
 
+wait_portal() {
+  local deadline=$((SECONDS + ${SOVEREIGN_PORTAL_TIMEOUT:-300}))
+  until curl -fsS "$BASE_URL/api/control/v1/health" >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || {
+      echo "error: the Sovereign portal did not become ready at $BASE_URL" >&2
+      return 1
+    }
+    sleep 2
+  done
+}
+
+setup_url() {
+  local token response path
+  token=""
+  if [[ "${1:-}" == --renew ]]; then
+    response="$(operator_curl -X POST "$BASE_URL/api/control/v1/auth/setup-claim")" || return 1
+    path="$(printf '%s' "$response" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+    [[ -n "$path" ]] || { echo "error: Control returned no setup path" >&2; return 1; }
+    printf '%s%s' "$BASE_URL" "$path"
+    return
+  fi
+  [[ ! -s "$SOVEREIGN_HOME/state/admin-claim" ]] || token="$(<"$SOVEREIGN_HOME/state/admin-claim")"
+  [[ -n "$token" ]] && printf '%s/claim/%s' "$BASE_URL" "$token"
+}
+
+open_portal() {
+  local target
+  if [[ -s "$SOVEREIGN_HOME/state/admin-claim" ]]; then
+    target="$(setup_url --renew || setup_url || true)"
+  else
+    target=""
+  fi
+  target="${target:-$BASE_URL/}"
+  echo "portal: $target"
+  open_url "$target"
+}
+
 wait_ready() {
   local deadline=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700}))
-  echo "waiting for generation and embedding readiness (first model load can take a while)..."
+  echo "models are loading in the background (the first start can take a while)..."
   if [[ "$PROFILE" == metal-arm64 ]]; then
     until curl -fsS http://127.0.0.1:42666/healthz >/dev/null 2>&1; do
       (( SECONDS < deadline )) || {
@@ -101,33 +203,16 @@ wait_ready() {
     }
     sleep 5
   done
-  until curl -fsS "$BASE_URL/api/control/v1/health" >/dev/null 2>&1; do
-    (( SECONDS < deadline )) || return 1
-    sleep 2
-  done
-}
-
-api_login() {
-  local username password
-  username="$(sed -n 's/^username=//p' "$SOVEREIGN_HOME/credentials")"
-  password="$(sed -n 's/^password=//p' "$SOVEREIGN_HOME/credentials")"
-  [[ -z "${API_COOKIE:-}" ]] || rm -f "$API_COOKIE"
-  API_COOKIE="$(mktemp "${TMPDIR:-/tmp}/sovereign-cookie.XXXXXX")"
-  trap 'rm -f "${API_COOKIE:-}"' EXIT
-  curl -fsS -c "$API_COOKIE" -H 'Content-Type: application/json' \
-    -d "{\"username\":\"$username\",\"password\":\"$password\"}" \
-    "$BASE_URL/api/control/v1/auth/login" >/dev/null
 }
 
 refresh_gateway_config() {
   local deadline response
-  api_login
-  curl -fsS -b "$API_COOKIE" -X POST \
+  operator_curl -X POST \
     "$BASE_URL/api/control/v1/gateway/config/regenerate" >/dev/null
-  curl -fsS -b "$API_COOKIE" -X POST \
+  operator_curl -X POST \
     "$BASE_URL/api/control/v1/gateway/reload" >/dev/null
   deadline=$((SECONDS + ${SOVEREIGN_GATEWAY_TIMEOUT:-180}))
-  until response="$(curl -fsS -b "$API_COOKIE" \
+  until response="$(operator_curl \
     "$BASE_URL/api/control/v1/gateway/status" 2>/dev/null)" && \
     printf '%s' "$response" | grep -q '"healthy":true'; do
     (( SECONDS < deadline )) || {
@@ -141,14 +226,13 @@ refresh_gateway_config() {
 api_post_job() {
   local path="$1" body="${2:-}" response job deadline status
   [[ -n "$body" ]] || body='{}'
-  api_login
-  response="$(curl -fsS -b "$API_COOKIE" -H 'Content-Type: application/json' -d "$body" "$BASE_URL/api/control/v1$path")"
+  response="$(operator_curl -H 'Content-Type: application/json' -d "$body" "$BASE_URL/api/control/v1$path")"
   job="$(printf '%s' "$response" | sed -n 's/.*"job_id":"\([^"]*\)".*/\1/p')"
   [[ -n "$job" ]] || { printf '%s\n' "$response"; return 0; }
   echo "job: $job"
   deadline=$((SECONDS + 3600))
   while (( SECONDS < deadline )); do
-    response="$(curl -fsS -b "$API_COOKIE" "$BASE_URL/api/control/v1/jobs/$job")"
+    response="$(operator_curl "$BASE_URL/api/control/v1/jobs/$job")"
     status="$(printf '%s' "$response" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')"
     case "$status" in
       succeeded) printf '%s\n' "$response"; return 0 ;;
@@ -160,11 +244,79 @@ api_post_job() {
   return 1
 }
 
+configure_access() {
+  local mode="${1:-}" target="${2:-}" acknowledgement="${3:-}" bind site public http_port https_port plain_http plain_https
+  plain_http="$HTTP_PORT"; plain_https="$HTTPS_PORT"
+  if [[ "$CURRENT_ACCESS_MODE" == domain ]]; then plain_http=8880; plain_https=8443; fi
+  case "$mode" in
+    desktop)
+      bind=127.0.0.1; site=:80; http_port="$plain_http"; https_port="$plain_https"
+      public="http://127.0.0.1:$http_port"
+      ;;
+    lan)
+      [[ -n "$target" ]] || target="$(discover_private_ipv4)" || {
+        echo "error: no private LAN address was detected; pass one explicitly" >&2
+        return 1
+      }
+      is_private_ipv4 "$target" || { echo "error: $target is not an RFC1918 private IPv4 address" >&2; return 1; }
+      bind="$target"; site=:80; http_port="$plain_http"; https_port="$plain_https"
+      public="http://$target:$http_port"
+      ;;
+    domain)
+      [[ -n "$target" && "$target" != *://* && "$target" != */* && "$target" == *.* ]] || {
+        echo "usage: sovereign access domain <hostname>" >&2; return 2
+      }
+      bind=0.0.0.0; site="$target"; http_port=80; https_port=443; public="https://$target"
+      ;;
+    wan-http)
+      [[ "$acknowledgement" == --i-understand-this-is-insecure ]] || {
+        echo "error: public cleartext HTTP exposes login sessions; use a domain with TLS or add --i-understand-this-is-insecure" >&2
+        return 2
+      }
+      [[ -n "$target" && "$target" != *://* && "$target" != */* ]] || {
+        echo "usage: sovereign access wan-http <public-host-or-ip> --i-understand-this-is-insecure" >&2; return 2
+      }
+      bind=0.0.0.0; site=:80; http_port="$plain_http"; https_port="$plain_https"
+      public="http://$target:$http_port"
+      ;;
+    *) echo "usage: sovereign access desktop|lan [private-ip]|domain <hostname>|wan-http <host> --i-understand-this-is-insecure" >&2; return 2 ;;
+  esac
+  set_env_value SOVEREIGN_ACCESS_MODE "$mode"
+  set_env_value SOVEREIGN_BIND_ADDRESS "$bind"
+  set_env_value SOVEREIGN_SITE_ADDRESS "$site"
+  set_env_value SOVEREIGN_PUBLIC_URL "$public"
+  if [[ "$mode" == wan-http ]]; then
+    set_env_value SOVEREIGN_INSECURE_WAN_ACK I-understand-cleartext-http-is-insecure
+  else
+    set_env_value SOVEREIGN_INSECURE_WAN_ACK ""
+  fi
+  set_env_value HTTP_PORT "$http_port"
+  set_env_value HTTPS_PORT "$https_port"
+  printf '%s\n' "$mode" > "$SOVEREIGN_HOME/state/access-mode"
+  chmod 600 "$SOVEREIGN_HOME/state/access-mode"
+  BASE_URL="$public"
+  HTTP_PORT="$http_port"
+  HTTPS_PORT="$https_port"
+  CURRENT_ACCESS_MODE="$mode"
+  compose up -d caddy
+  wait_portal
+  echo "access mode: $mode"
+  echo "portal: $BASE_URL/"
+}
+
 usage() {
   cat <<'EOF'
 Usage: sovereign <command> [options]
 
   up                         Pull, start, wait, and run the smoke suite
+  open                       Open the portal (or first-admin setup) in a browser
+  url                        Print the portal URL
+  access desktop             Bind the portal to this computer only
+  access lan [private-ip]    Bind to a private LAN address
+  access domain <hostname>   Publish with automatic HTTPS
+  access wan-http <host> --i-understand-this-is-insecure
+                             Explicitly publish cleartext HTTP
+  admin setup-link           Create a fresh 30-minute first-admin link
   down                       Stop the appliance without deleting data
   status                     Show containers and the product health endpoint
   logs [compose log args]    Show or follow service logs
@@ -185,12 +337,33 @@ case "${1:-help}" in
     start_metal_embeddings
     if [[ ! -f "$SOVEREIGN_HOME/state/offline" ]]; then compose pull; fi
     compose up -d --remove-orphans
+    wait_portal
+    open_portal
     wait_ready
     refresh_gateway_config
     if [[ "${SOVEREIGN_SKIP_SMOKE:-0}" != 1 ]]; then
       compose --profile tools run --rm sovereign-evals suite smoke --report-dir /sovereign/reports
     fi
     echo "ready: $BASE_URL/"
+    ;;
+  open)
+    wait_portal
+    open_portal
+    ;;
+  url) printf '%s/\n' "$BASE_URL" ;;
+  access)
+    shift
+    configure_access "${1:-}" "${2:-}" "${3:-}"
+    ;;
+  admin)
+    case "${2:-}" in
+      setup-link)
+        wait_portal
+        link="$(setup_url --renew)"
+        printf '%s\n' "$link"
+        ;;
+      *) echo "usage: sovereign admin setup-link" >&2; exit 2 ;;
+    esac
     ;;
   down)
     compose down
@@ -215,8 +388,7 @@ case "${1:-help}" in
     printf '%s\n' "$backup_result"
     backup_id="$(printf '%s\n' "$backup_result" | sed -n 's/.*"backup_id":"\([^"]*\)".*/\1/p' | tail -n 1)"
     [[ -n "$backup_id" ]] || { echo "error: backup job returned no backup_id" >&2; exit 1; }
-    api_login
-    verification="$(curl -fsS -b "$API_COOKIE" -H 'Content-Type: application/json' -d '{}' \
+    verification="$(operator_curl -H 'Content-Type: application/json' -d '{}' \
       "$BASE_URL/api/control/v1/backups/$backup_id/verify")"
     printf '%s\n' "$verification"
     printf '%s' "$verification" | grep -q '"valid":true' || {

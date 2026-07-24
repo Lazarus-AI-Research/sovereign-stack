@@ -40,6 +40,51 @@ paths:
       operationId: getSession
       summary: Inspect the current session
       responses: {"200": {$ref: "#/components/responses/Document"}, "401": {$ref: "#/components/responses/Error"}}
+  /auth/claim/{token}:
+    parameters: [{$ref: "#/components/parameters/Token"}]
+    post:
+      operationId: claimFirstAdministrator
+      summary: Consume a single-use first-administrator claim
+      security: []
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}, "410": {$ref: "#/components/responses/Error"}}
+  /auth/setup-claim:
+    post:
+      operationId: createSetupClaim
+      summary: Replace the short-lived first-administrator claim (host CLI only)
+      security: [{operatorToken: []}]
+      responses: {"201": {$ref: "#/components/responses/Document"}, "409": {$ref: "#/components/responses/Error"}}
+  /auth/invitations/{token}:
+    parameters: [{$ref: "#/components/parameters/Token"}]
+    get:
+      operationId: inspectInvitation
+      summary: Inspect a live invitation
+      security: []
+      responses: {"200": {$ref: "#/components/responses/Document"}, "410": {$ref: "#/components/responses/Error"}}
+    post:
+      operationId: acceptInvitation
+      summary: Create an identity from a single-use invitation
+      security: []
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}, "410": {$ref: "#/components/responses/Error"}}
+  /users:
+    get:
+      operationId: listUsers
+      summary: List Control identities and workspace memberships
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /users/{id}:
+    parameters: [{$ref: "#/components/parameters/ID"}]
+    patch:
+      operationId: updateUser
+      summary: Change role, status, or workspace memberships
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"200": {$ref: "#/components/responses/Document"}}
+  /invitations:
+    post:
+      operationId: createInvitation
+      summary: Create a 24-hour single-use invitation
+      requestBody: {$ref: "#/components/requestBodies/Document"}
+      responses: {"201": {$ref: "#/components/responses/Document"}}
   /status:
     get:
       operationId: getStatus
@@ -173,8 +218,13 @@ paths:
     parameters: [{$ref: "#/components/parameters/ID"}]
     post:
       operationId: activateEmbeddingProfile
-      summary: Verify and activate an embedding profile
+      summary: Rebuild every workspace and atomically activate this appliance-wide profile
       responses: {"202": {$ref: "#/components/responses/Accepted"}}
+  /embedding-state:
+    get:
+      operationId: getEmbeddingState
+      summary: Get the appliance-wide active embedding provider
+      responses: {"200": {$ref: "#/components/responses/Document"}}
 
   /workspaces:
     get:
@@ -194,7 +244,7 @@ paths:
   /indexes/rebuild:
     post:
       operationId: createAndRebuildIndex
-      summary: Create and rebuild the first index for a workspace
+      summary: Create or rebuild a workspace index with the appliance-wide active profile
       requestBody: {$ref: "#/components/requestBodies/Document"}
       responses: {"202": {$ref: "#/components/responses/Accepted"}}
   /indexes/{id}:
@@ -211,7 +261,7 @@ paths:
     parameters: [{$ref: "#/components/parameters/ID"}]
     post:
       operationId: rebuildIndex
-      summary: Build a replacement from an existing index namespace
+      summary: Rebuild with the appliance-wide active profile
       requestBody: {$ref: "#/components/requestBodies/Document"}
       responses: {"202": {$ref: "#/components/responses/Accepted"}}
   /indexes/{id}/activate:
@@ -346,6 +396,12 @@ paths:
       operationId: getWorkspaceStatus
       summary: Probe the workspace provider
       responses: {"200": {$ref: "#/components/responses/Document"}}
+  /workspace/sso:
+    get:
+      operationId: createWorkspaceSession
+      summary: Synchronize the Control identity and redirect through one-time Workspace SSO
+      responses:
+        "303": {description: Redirect to the embedded Workspace session}
   /workspace/branding/apply:
     post:
       operationId: applyWorkspaceBranding
@@ -382,8 +438,10 @@ components:
   securitySchemes:
     sessionCookie: {type: apiKey, in: cookie, name: sovereign_session}
     bearerAuth: {type: http, scheme: bearer}
+    operatorToken: {type: apiKey, in: header, name: X-Sovereign-Operator-Token}
   parameters:
     ID: {name: id, in: path, required: true, schema: {type: string}}
+    Token: {name: token, in: path, required: true, schema: {type: string}}
   requestBodies:
     Document:
       required: true

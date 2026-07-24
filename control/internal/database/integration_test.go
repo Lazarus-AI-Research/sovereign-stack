@@ -36,8 +36,48 @@ func testPool(t *testing.T) (context.Context, *TestDeps) {
 	}
 	t.Cleanup(pool.Close)
 	// clean slate per run
-	pool.Exec(ctx, "TRUNCATE sessions, admin_users, jobs")
+	pool.Exec(ctx, "TRUNCATE workspace_memberships, invitations, setup_claims, sessions, admin_users, jobs CASCADE")
 	return ctx, &TestDeps{Auth: auth.New(pool), Jobs: jobs.New(pool)}
+}
+
+func TestFirstAdminInvitationAndRoleSafety(t *testing.T) {
+	ctx, deps := testPool(t)
+	claim, expires, err := deps.Auth.EnsureSetupClaim(ctx)
+	if err != nil || claim == "" || !expires.After(time.Now()) {
+		t.Fatalf("setup claim: token=%q expires=%v err=%v", claim, expires, err)
+	}
+	admin, err := deps.Auth.Claim(ctx, claim, "Owner.Admin", "Owner", "correct-horse-battery")
+	if err != nil || admin.Role != "admin" || admin.Username != "owner.admin" {
+		t.Fatalf("claim: %+v %v", admin, err)
+	}
+	if token, _, err := deps.Auth.EnsureSetupClaim(ctx); err != nil || token != "" {
+		t.Fatalf("claim remained available after first user: %q %v", token, err)
+	}
+
+	invite, rawToken, err := deps.Auth.CreateInvitation(ctx, admin.ID, "member", []string{"workspace-a"})
+	if err != nil || rawToken == "" || invite.Role != "member" {
+		t.Fatalf("invitation: %+v %v", invite, err)
+	}
+	member, err := deps.Auth.AcceptInvitation(ctx, rawToken, "Team.Member", "Teammate", "another-correct-password")
+	if err != nil || len(member.WorkspaceIDs) != 1 || member.WorkspaceIDs[0] != "workspace-a" {
+		t.Fatalf("accept invitation: %+v %v", member, err)
+	}
+	users, err := deps.Auth.ListUsers(ctx)
+	if err != nil || len(users) != 2 {
+		t.Fatalf("list users: %+v %v", users, err)
+	}
+	if _, err := deps.Auth.UpdateUser(ctx, admin.ID, "member", false, nil); err == nil {
+		t.Fatal("final active administrator was demoted")
+	}
+	if _, err := deps.Auth.UpdateUser(ctx, member.ID, "admin", false, nil); err != nil {
+		t.Fatalf("promote second admin: %v", err)
+	}
+	if _, err := deps.Auth.UpdateUser(ctx, admin.ID, "admin", true, nil); err != nil {
+		t.Fatalf("disable admin with a replacement: %v", err)
+	}
+	if _, err := deps.Auth.Login(ctx, admin.Username, "correct-horse-battery"); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("disabled user login: %v", err)
+	}
 }
 
 type TestDeps struct {

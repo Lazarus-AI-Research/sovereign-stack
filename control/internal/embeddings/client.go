@@ -21,6 +21,61 @@ type Client struct {
 	http *http.Client
 }
 
+type Prober interface {
+	Probe(context.Context, string) (int, error)
+}
+
+// OpenAIClient probes any OpenAI-compatible embedding endpoint, including
+// Sovereign Runtime and aliases routed through LiteLLM.
+type OpenAIClient struct {
+	baseURL string
+	apiKey  string
+	http    *http.Client
+}
+
+func NewOpenAIClient(baseURL, apiKey string) *OpenAIClient {
+	return &OpenAIClient{
+		baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey,
+		http: &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+func (c *OpenAIClient) Probe(ctx context.Context, servedModelName string) (int, error) {
+	payload, err := json.Marshal(map[string]any{"model": servedModelName, "input": "sovereign readiness probe"})
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/embeddings", bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return 0, fmt.Errorf("embedding probe: %s: %s", resp.Status, raw)
+	}
+	var result struct {
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if len(result.Data) != 1 || len(result.Data[0].Embedding) == 0 {
+		return 0, fmt.Errorf("embedding probe returned no vector")
+	}
+	return len(result.Data[0].Embedding), nil
+}
+
 func NewClient(baseURL string) *Client {
 	root := strings.TrimRight(baseURL, "/")
 	root = strings.TrimSuffix(root, "/v1")

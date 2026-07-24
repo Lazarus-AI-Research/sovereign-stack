@@ -25,6 +25,11 @@ func TestGenerateConfigRoutesAliasesToOwningServices(t *testing.T) {
     provider: embeddinggemma
     model: ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
     served_model_name: embedding-gemma-default
+  research:
+    provider: sovereign-runtime
+    model: org/research
+    model_entry_id: research-registry-entry
+    served_model_name: research-default
 `
 	if err := os.WriteFile(profilesPath, []byte(profile), 0o600); err != nil {
 		t.Fatal(err)
@@ -62,5 +67,8 @@ func TestGenerateConfigRoutesAliasesToOwningServices(t *testing.T) {
 	}
 	if got := routes["embedding-gemma-default"]["api_key"]; got != "not-required" {
 		t.Fatalf("embedding api_key = %q", got)
+	}
+	if got := routes["research-default"]["model"]; got != "openai/research-default" {
+		t.Fatalf("runtime embedding upstream model = %q", got)
 	}
 }

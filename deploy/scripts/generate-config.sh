@@ -47,7 +47,55 @@ LITELLM_MASTER_KEY="$(existing LITELLM_MASTER_KEY)"
 RUNTIME_KEY="$(keep_or_generate SOVEREIGN_RUNTIME_API_KEY 32)"
 PROXY_TOKEN="$(keep_or_generate DOCKER_PROXY_TOKEN 32)"
 INDEX_TOKEN="$(keep_or_generate WORKSPACE_INDEX_ADMIN_TOKEN 32)"
-ADMIN_PASSWORD="$(keep_or_generate SOVEREIGN_ADMIN_PASSWORD 20)"
+OPERATOR_TOKEN="$(keep_or_generate SOVEREIGN_OPERATOR_TOKEN 32)"
+WORKSPACE_JWT_SECRET="$(keep_or_generate WORKSPACE_JWT_SECRET 32)"
+ACCESS_MODE="${SOVEREIGN_ACCESS_MODE:-$(existing SOVEREIGN_ACCESS_MODE)}"
+ACCESS_MODE="${ACCESS_MODE:-desktop}"
+BIND_ADDRESS="${SOVEREIGN_BIND_ADDRESS:-$(existing SOVEREIGN_BIND_ADDRESS)}"
+SITE_ADDRESS="${SOVEREIGN_SITE_ADDRESS:-$(existing SOVEREIGN_SITE_ADDRESS)}"
+INSTALLED_HTTP_PORT="$(existing HTTP_PORT)"
+INSTALLED_HTTP_PORT="${INSTALLED_HTTP_PORT:-${SOVEREIGN_HTTP_PORT:-8880}}"
+INSTALLED_HTTPS_PORT="$(existing HTTPS_PORT)"
+INSTALLED_HTTPS_PORT="${INSTALLED_HTTPS_PORT:-${SOVEREIGN_HTTPS_PORT:-8443}}"
+PUBLIC_URL="${SOVEREIGN_PUBLIC_URL:-$(existing SOVEREIGN_PUBLIC_URL)}"
+INSECURE_WAN_ACK="${SOVEREIGN_INSECURE_WAN_ACK:-$(existing SOVEREIGN_INSECURE_WAN_ACK)}"
+case "$ACCESS_MODE" in
+  desktop)
+    BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
+    SITE_ADDRESS="${SITE_ADDRESS:-:80}"
+    PUBLIC_URL="${PUBLIC_URL:-http://127.0.0.1:$INSTALLED_HTTP_PORT}"
+    ;;
+  lan)
+    if [[ -z "$BIND_ADDRESS" ]]; then
+      LAN_CANDIDATES="$(hostname -I 2>/dev/null || true)"
+      [[ -n "$LAN_CANDIDATES" ]] || LAN_CANDIDATES="$(ipconfig getifaddr en0 2>/dev/null || true)"
+      for candidate in $LAN_CANDIDATES; do
+        if printf '%s\n' "$candidate" | awk -F. 'NF==4 && ($1==10 || ($1==192 && $2==168) || ($1==172 && $2>=16 && $2<=31)) {ok=1} END {exit !ok}'; then
+          BIND_ADDRESS="$candidate"; break
+        fi
+      done
+    fi
+    [[ -n "$BIND_ADDRESS" ]] || { echo "error: LAN access requested but no private IPv4 address was found" >&2; exit 2; }
+    SITE_ADDRESS="${SITE_ADDRESS:-:80}"
+    PUBLIC_URL="${PUBLIC_URL:-http://$BIND_ADDRESS:$INSTALLED_HTTP_PORT}"
+    ;;
+  domain)
+    [[ -n "$SITE_ADDRESS" && "$SITE_ADDRESS" != :80 ]] || { echo "error: domain access requires SOVEREIGN_SITE_ADDRESS" >&2; exit 2; }
+    BIND_ADDRESS="${BIND_ADDRESS:-0.0.0.0}"
+    [[ -n "$(existing HTTP_PORT)" || -n "${SOVEREIGN_HTTP_PORT:-}" ]] || INSTALLED_HTTP_PORT=80
+    [[ -n "$(existing HTTPS_PORT)" || -n "${SOVEREIGN_HTTPS_PORT:-}" ]] || INSTALLED_HTTPS_PORT=443
+    PUBLIC_URL="${PUBLIC_URL:-https://$SITE_ADDRESS}"
+    ;;
+  wan-http)
+    [[ "$INSECURE_WAN_ACK" == "I-understand-cleartext-http-is-insecure" ]] || {
+      echo "error: wan-http requires SOVEREIGN_INSECURE_WAN_ACK=I-understand-cleartext-http-is-insecure" >&2; exit 2
+    }
+    BIND_ADDRESS="${BIND_ADDRESS:-0.0.0.0}"
+    SITE_ADDRESS="${SITE_ADDRESS:-:80}"
+    [[ -n "$PUBLIC_URL" ]] || { echo "error: wan-http requires SOVEREIGN_PUBLIC_URL" >&2; exit 2; }
+    ;;
+  *) echo "error: unknown SOVEREIGN_ACCESS_MODE $ACCESS_MODE" >&2; exit 2 ;;
+esac
 
 AGENT_TOKEN_FILE="$SOVEREIGN_HOME/agent.token"
 if [[ ! -f "$AGENT_TOKEN_FILE" ]]; then
@@ -118,10 +166,15 @@ cat > "$TMP" <<EOF
 SOVEREIGN_VERSION=$VERSION
 SOVEREIGN_PROFILE=$PROFILE
 SOVEREIGN_RELEASE_ROOT=$RELEASE_ROOT
-SOVEREIGN_BIND_ADDRESS=127.0.0.1
+SOVEREIGN_ACCESS_MODE=$ACCESS_MODE
+SOVEREIGN_BIND_ADDRESS=$BIND_ADDRESS
+SOVEREIGN_SITE_ADDRESS=$SITE_ADDRESS
+SOVEREIGN_PUBLIC_URL=$PUBLIC_URL
+SOVEREIGN_INSECURE_WAN_ACK=$INSECURE_WAN_ACK
 SOVEREIGN_HOST_UID=$(id -u)
 SOVEREIGN_HOST_GID=$(id -g)
-HTTP_PORT=${SOVEREIGN_HTTP_PORT:-8880}
+HTTP_PORT=$INSTALLED_HTTP_PORT
+HTTPS_PORT=$INSTALLED_HTTPS_PORT
 
 SOVEREIGN_CONTROL_IMAGE=$CONTROL_IMAGE
 SOVEREIGN_DOCKER_PROXY_IMAGE=$DOCKER_PROXY_IMAGE
@@ -162,7 +215,8 @@ CONTROL_DATABASE_URL=postgres://sovereign:$POSTGRES_PASSWORD@postgres:5432/sover
 DATABASE_URL=postgres://sovereign:$POSTGRES_PASSWORD@postgres:5432/litellm
 PHOENIX_SQL_DATABASE_URL=postgresql://sovereign:$POSTGRES_PASSWORD@postgres:5432/phoenix
 LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY
-SOVEREIGN_ADMIN_PASSWORD=$ADMIN_PASSWORD
+SOVEREIGN_OPERATOR_TOKEN=$OPERATOR_TOKEN
+WORKSPACE_JWT_SECRET=$WORKSPACE_JWT_SECRET
 SOVEREIGN_RUNTIME_API_KEY=$RUNTIME_KEY
 DOCKER_PROXY_TOKEN=$PROXY_TOKEN
 WORKSPACE_INDEX_ADMIN_TOKEN=$INDEX_TOKEN
@@ -180,14 +234,8 @@ mv "$TMP" "$ENV_FILE"
 
 printf '%s\n' "$PROFILE" > "$SOVEREIGN_HOME/state/profile"
 chmod 600 "$SOVEREIGN_HOME/state/profile"
-
-CREDENTIALS="$SOVEREIGN_HOME/credentials"
-cat > "$CREDENTIALS" <<EOF
-username=admin
-password=$ADMIN_PASSWORD
-url=http://127.0.0.1:${SOVEREIGN_HTTP_PORT:-8880}/control/
-EOF
-chmod 600 "$CREDENTIALS"
+printf '%s\n' "$ACCESS_MODE" > "$SOVEREIGN_HOME/state/access-mode"
+chmod 600 "$SOVEREIGN_HOME/state/access-mode"
 
 GATEWAY_CONFIG="$SOVEREIGN_HOME/secrets/litellm/config.yaml"
 if [[ ! -s "$GATEWAY_CONFIG" ]]; then
