@@ -1,6 +1,7 @@
 # Environment / secrets
 .env
 deploy/.env
+.reference/
 
 # Go
 bin/
