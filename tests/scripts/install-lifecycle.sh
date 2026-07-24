@@ -141,7 +141,17 @@ METAL_PLIST="$HOME/Library/LaunchAgents/$METAL_LABEL.plist"
 [[ -f "$METAL_PLIST" ]]
 grep -q '<key>KeepAlive</key>' "$METAL_PLIST"
 grep -q 'metal &amp; service' "$METAL_PLIST"
-plutil -lint "$METAL_PLIST" >/dev/null
+if command -v plutil >/dev/null 2>&1; then
+  plutil -lint "$METAL_PLIST" >/dev/null
+else
+  python3 - "$METAL_PLIST" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as plist:
+    plistlib.load(plist)
+PY
+fi
 SOVEREIGN_HOME="$METAL_SERVICE_HOME" "$ROOT/deploy/scripts/uninstall-embeddinggemma-metal.sh"
 [[ ! -e "$METAL_PLIST" ]]
 
