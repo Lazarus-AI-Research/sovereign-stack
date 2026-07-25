@@ -4,6 +4,14 @@ All notable changes to Sovereign Stack are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-rc.6] - 2026-07-25
+
+- Changed the default loopback and private-LAN portal port from `8880` to the
+  one-time randomly selected `54854`. Existing installations keep their saved
+  port, and `SOVEREIGN_HTTP_PORT` remains available as an override.
+- Added bounded retries when release CI resolves and verifies the separately
+  versioned Runtime images, avoiding failures on transient registry errors.
+
 ## [0.1.0-rc.5] - 2026-07-24
 
 - Added an explicitly named unsigned macOS package fallback when Apple

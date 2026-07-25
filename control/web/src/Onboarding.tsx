@@ -56,7 +56,7 @@ export function Onboarding({ kind, token, onComplete }: { kind: "claim" | "invit
       const target = accessMode === "lan" ? network.lan_addresses?.[0] || "" : "";
       if (accessMode === "lan" && !target) throw new ApiError(422, "No private network address was detected.", "network_address_unavailable", "Keep the current setting and configure Network Access later.");
       const current = new URL(network.public_url || window.location.origin);
-      const port = current.port || window.location.port || "8880";
+      const port = current.port || window.location.port || "54854";
       const nextURL = accessMode === "lan" ? `http://${target}:${port}/` : `http://127.0.0.1:${port}/`;
       await api.setNetwork(accessMode, target);
       setRedirectURL(nextURL);

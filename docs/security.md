@@ -1,6 +1,6 @@
 # Security
 
-The default mode is single-host: Caddy binds to `127.0.0.1:8880`. The host CLI
+The default mode is single-host: Caddy binds to `127.0.0.1:54854`. The host CLI
 can bind the same authenticated portal to an RFC1918 address, or configure a
 public hostname with Caddy-managed TLS. Public cleartext HTTP is rejected
 unless the operator supplies an explicit insecure-transport acknowledgement.

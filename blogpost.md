@@ -74,8 +74,8 @@ SovereignStack v0.1 is a public preview with two certified profiles: **Apple Sil
 **Install:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash
 ```
 
 The first run takes a while — it's downloading a signature verifier, container images, and model weights. Leave it running until it prints your local URL and the path to your generated credentials.
@@ -84,12 +84,12 @@ To pick a profile explicitly instead of auto-detecting:
 
 ```bash
 # Apple Silicon
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --profile metal-arm64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --profile metal-arm64
 
 # Ubuntu NVIDIA CUDA
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --profile cuda-x86_64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --profile cuda-x86_64
 ```
 
 **First use:**
@@ -106,8 +106,8 @@ sovereign status
 
 Then open it in your browser:
 
-- **Workspace** (chat and documents): <http://127.0.0.1:8880/>
-- **Sovereign Control** (admin): <http://127.0.0.1:8880/control/>
+- **Workspace** (chat and documents): <http://127.0.0.1:54854/>
+- **Sovereign Control** (admin): <http://127.0.0.1:54854/control/>
 
 Your admin login was generated during install — read it with:
 

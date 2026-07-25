@@ -6,7 +6,7 @@ operator control plane, an OpenAI-compatible model gateway, local inference,
 vector search, evaluations, observability, and backups in one managed stack.
 
 The current public preview is
-[`v0.1.0-rc.5`](https://github.com/Lazarus-AI-Research/sovereign-stack/releases/tag/v0.1.0-rc.5).
+[`v0.1.0-rc.6`](https://github.com/Lazarus-AI-Research/sovereign-stack/releases/tag/v0.1.0-rc.6).
 It supports Apple Silicon Macs and Ubuntu NVIDIA CUDA hosts.
 Release-candidate users should pin both the installer URL and
 `SOVEREIGN_VERSION` exactly as shown below.
@@ -55,10 +55,11 @@ profile, verifies the signed release, generates appliance secrets, pulls the
 exact digest-pinned images, and starts the portal immediately while models
 continue loading. It opens the one-time first-administrator setup page in the
 default browser and completes runtime smoke tests in the background.
+The default local portal address is <http://127.0.0.1:54854/>.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash
 ```
 
 The first run can take a while because it downloads a pinned signature verifier,
@@ -72,12 +73,12 @@ To choose a profile explicitly:
 
 ```bash
 # Apple Silicon
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --profile metal-arm64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --profile metal-arm64
 
 # Ubuntu NVIDIA CUDA
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --profile cuda-x86_64
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --profile cuda-x86_64
 ```
 
 When installing over SSH, the installer selects private-LAN access and prints
@@ -86,16 +87,16 @@ also choose access explicitly:
 
 ```bash
 # Local desktop
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --access desktop
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --access desktop
 
 # Headless/private network
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --access lan
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --access lan
 
 # Public domain with automatic HTTPS
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash -s -- --domain ai.example.com
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash -s -- --domain ai.example.com
 ```
 
 The default install locations are:
@@ -397,7 +398,7 @@ credentials, models, databases, reports, backups, and Docker volumes are
 preserved.
 
 ```bash
-VERSION=0.1.0-rc.5
+VERSION=0.1.0-rc.6
 curl -fsSL "https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v${VERSION}/deploy/scripts/install.sh" \
   | SOVEREIGN_VERSION="$VERSION" bash
 ```
@@ -461,7 +462,7 @@ sovereign uninstall --purge --yes
   `sovereign status` and `sovereign logs -f sovereign-runtime` before retrying.
 - **Gated model download** — export a valid `HF_TOKEN`, then re-run the same
   version-pinned installer; completed verified downloads are retained.
-- **Port 8880 already in use** — set `SOVEREIGN_HTTP_PORT` during install and
+- **Port 54854 already in use** — set `SOVEREIGN_HTTP_PORT` during install and
   run `sovereign url` to print the resulting portal URL.
 - **Another SovereignStack owns fixed containers** — stop that installation
   before starting this one. Takeover is deliberately refused to protect

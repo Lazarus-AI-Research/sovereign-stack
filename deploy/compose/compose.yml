@@ -19,7 +19,7 @@ services:
     env_file:
       - ${SOVEREIGN_ENV_FILE:-.env}
     ports:
-      - "${SOVEREIGN_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8880}:80"
+      - "${SOVEREIGN_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-54854}:80"
       - "${SOVEREIGN_BIND_ADDRESS:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
     volumes:
       - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro

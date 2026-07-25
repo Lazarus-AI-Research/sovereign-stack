@@ -23,7 +23,7 @@ compose() {
 
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed 's/^"//;s/"$//'; }
 HTTP_PORT="$(env_value HTTP_PORT)"
-HTTP_PORT="${HTTP_PORT:-8880}"
+HTTP_PORT="${HTTP_PORT:-54854}"
 HTTPS_PORT="$(env_value HTTPS_PORT)"
 HTTPS_PORT="${HTTPS_PORT:-8443}"
 OPERATOR_TOKEN="$(env_value SOVEREIGN_OPERATOR_TOKEN)"
@@ -247,7 +247,7 @@ api_post_job() {
 configure_access() {
   local mode="${1:-}" target="${2:-}" acknowledgement="${3:-}" bind site public http_port https_port plain_http plain_https
   plain_http="$HTTP_PORT"; plain_https="$HTTPS_PORT"
-  if [[ "$CURRENT_ACCESS_MODE" == domain ]]; then plain_http=8880; plain_https=8443; fi
+  if [[ "$CURRENT_ACCESS_MODE" == domain ]]; then plain_http=54854; plain_https=8443; fi
   case "$mode" in
     desktop)
       bind=127.0.0.1; site=:80; http_port="$plain_http"; https_port="$plain_https"

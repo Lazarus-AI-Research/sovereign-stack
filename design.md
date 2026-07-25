@@ -1102,7 +1102,7 @@ services:
       - sovereign-control
       - sovereign-workspace
     ports:
-      - "${HTTP_PORT:-80}:80"
+      - "${HTTP_PORT:-54854}:80"
       - "${HTTPS_PORT:-443}:443"
     volumes:
       - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro

@@ -28,9 +28,24 @@ for file in .env agent.token secrets/control-vault.key; do
   [[ "$mode" == 600 ]] || { echo "$file mode is $mode, expected 600" >&2; exit 1; }
 done
 [[ ! -e "$TEST_HOME/credentials" ]] || { echo "legacy generated credentials file should not exist" >&2; exit 1; }
-[[ "$(SOVEREIGN_HOME="$TEST_HOME" "$TEST_HOME/bin/sovereign" url)" == "http://127.0.0.1:8880/" ]]
+[[ "$(SOVEREIGN_HOME="$TEST_HOME" "$TEST_HOME/bin/sovereign" url)" == "http://127.0.0.1:54854/" ]]
 grep -qx 'SOVEREIGN_ACCESS_MODE=desktop' "$TEST_HOME/.env"
-grep -qx 'SOVEREIGN_PUBLIC_URL=http://127.0.0.1:8880' "$TEST_HOME/.env"
+grep -qx 'SOVEREIGN_PUBLIC_URL=http://127.0.0.1:54854' "$TEST_HOME/.env"
+
+# Upgrades preserve an existing installation's saved port instead of silently
+# moving its portal to the new default.
+LEGACY_PORT_HOME="$TEST_HOME/legacy-port"
+mkdir -p "$LEGACY_PORT_HOME"
+cat > "$LEGACY_PORT_HOME/.env" <<'EOF'
+HTTP_PORT=8880
+SOVEREIGN_PUBLIC_URL=http://127.0.0.1:8880
+EOF
+SOVEREIGN_HOME="$LEGACY_PORT_HOME" \
+SOVEREIGN_PROFILE=metal-arm64 \
+SOVEREIGN_RELEASE_ROOT="$TEST_HOME/current" \
+  "$ROOT/deploy/scripts/generate-config.sh"
+grep -qx 'HTTP_PORT=8880' "$LEGACY_PORT_HOME/.env"
+grep -qx 'SOVEREIGN_PUBLIC_URL=http://127.0.0.1:8880' "$LEGACY_PORT_HOME/.env"
 
 # Noninteractive installs can select a TLS domain directly; unsafe public HTTP
 # remains impossible without the explicit acknowledgement value.
@@ -48,7 +63,7 @@ grep -qx 'SOVEREIGN_PUBLIC_URL=https://ai.example.test' "$DOMAIN_HOME/.env"
 if SOVEREIGN_HOME="$TEST_HOME/rejected-wan" \
   SOVEREIGN_PROFILE=metal-arm64 \
   SOVEREIGN_ACCESS_MODE=wan-http \
-  SOVEREIGN_PUBLIC_URL=http://203.0.113.10:8880 \
+  SOVEREIGN_PUBLIC_URL=http://203.0.113.10:54854 \
   SOVEREIGN_RELEASE_ROOT="$TEST_HOME/current" \
   "$ROOT/deploy/scripts/generate-config.sh" >/dev/null 2>&1; then
   echo "generate-config accepted public cleartext HTTP without acknowledgement" >&2
