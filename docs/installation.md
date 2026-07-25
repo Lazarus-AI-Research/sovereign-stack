@@ -18,6 +18,7 @@ installs a small native bootstrap and starts the same signed, version-pinned
 installation in the background; the portal opens as soon as the control plane
 is ready. Every native package has detached Sigstore and SHA-256 verification
 artifacts on the release page, including the explicitly unsigned macOS package.
+The default local portal address is <http://127.0.0.1:54854/>.
 
 For the stable release:
 
@@ -28,8 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
 For a release candidate, pin both the bootstrap script and requested version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.5/deploy/scripts/install.sh \
-  | SOVEREIGN_VERSION=0.1.0-rc.5 bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0-rc.6/deploy/scripts/install.sh \
+  | SOVEREIGN_VERSION=0.1.0-rc.6 bash
 ```
 
 The bootstrap downloads the versioned release archive, verifies its SHA-256

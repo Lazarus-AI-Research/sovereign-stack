@@ -173,7 +173,7 @@ function NetworkAccess({ run }: { run: RunAction }) {
     const ok = await run("Update network access", async () => { await api.setNetwork(mode, mode === "desktop" ? "" : target); });
     if (!ok) return;
     const current = new URL(status?.public_url || window.location.origin);
-    const port = current.port || "8880";
+    const port = current.port || "54854";
     const next = mode === "domain" ? `https://${target}/` : mode === "lan" ? `http://${target}:${port}/` : `http://127.0.0.1:${port}/`;
     setPendingURL(next);
     const localBrowser = ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);

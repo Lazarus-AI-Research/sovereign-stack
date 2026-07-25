@@ -247,17 +247,34 @@ jobs:
           RUNTIME_VERSION="$(jq -r .runtime_version release/release-source.json)"
           for profile in cuda-x86_64 metal-arm64; do
             ref="$REGISTRY/sovereign-runtime:$profile-$RUNTIME_VERSION"
-            digest="$(docker buildx imagetools inspect "$ref" | awk '/^Digest:/ {print $2; exit}')"
-            test -n "$digest"
+            digest=""
+            for attempt in 1 2 3; do
+              if inspection="$(docker buildx imagetools inspect "$ref")"; then
+                digest="$(printf '%s\n' "$inspection" | awk '/^Digest:/ {print $2; exit}')"
+                [[ -n "$digest" ]] && break
+              fi
+              echo "::warning::Could not resolve $ref (attempt $attempt of 3)"
+              sleep $((attempt * 2))
+            done
+            [[ -n "$digest" ]] || { echo "Unable to resolve $ref after 3 attempts" >&2; exit 1; }
             case "$profile" in
               cuda-x86_64) name=sovereign-runtime-cuda ;;
               metal-arm64) name=sovereign-runtime-metal ;;
             esac
             printf '%s\n' "$digest" > "digests/$name"
-            cosign verify \
-              --certificate-identity-regexp '^https://github.com/Lazarus-AI-Research/sovereign-vllm/.github/workflows/release.yml@refs/tags/v' \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              "$ref@$digest" >/dev/null
+            verified=0
+            for attempt in 1 2 3; do
+              if cosign verify \
+                --certificate-identity-regexp '^https://github.com/Lazarus-AI-Research/sovereign-vllm/.github/workflows/release.yml@refs/tags/v' \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                "$ref@$digest" >/dev/null; then
+                verified=1
+                break
+              fi
+              echo "::warning::Could not verify $ref@$digest (attempt $attempt of 3)"
+              sleep $((attempt * 2))
+            done
+            (( verified == 1 )) || { echo "Unable to verify $ref@$digest after 3 attempts" >&2; exit 1; }
           done
       - name: Generate release manifest
         run: |
