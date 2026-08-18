@@ -52,12 +52,21 @@ jobs:
           PY
       - name: Shipped scripts
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/postinst
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
           node --check workspace/sovereign/preload.js
           chmod +x tests/fixtures/bin/* tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
           tests/scripts/install-lifecycle.sh
           tests/scripts/container-engine.sh
+          tests/scripts/hardware-detection.sh
+          tests/scripts/ubuntu-provisioning.sh
+          tests/scripts/ubuntu-install-resume.sh
+          tests/scripts/linux-package-entrypoint.sh
+          packaging/linux/build-package.sh --output-dir "$RUNNER_TEMP"
+          PACKAGE="$RUNNER_TEMP/SovereignStack-$(cat VERSION)-amd64.deb"
+          dpkg-deb --contents "$PACKAGE" > "$RUNNER_TEMP/sovereign-deb-contents.txt"
+          grep -q 'usr/local/libexec/sovereign-stack-package-install' "$RUNNER_TEMP/sovereign-deb-contents.txt"
+          grep -q 'usr/lib/systemd/system/sovereign-stack-package-install.service' "$RUNNER_TEMP/sovereign-deb-contents.txt"
       - name: Control UI
         run: npm ci --prefix control/web --no-fund --no-audit && npm run build --prefix control/web
 

@@ -9,9 +9,11 @@ development or post-MVP material and are not release claims.
 | `cuda-x86_64` | Ubuntu 24.04, NVIDIA GPU with 24 GB+ VRAM | CUDA generation container plus private `embeddinggemma` CUDA service | text chat, text embeddings, pgvector RAG |
 
 `deploy/scripts/detect-hardware.sh` fails closed when the host is outside this
-matrix. On CUDA it verifies Ubuntu, GPU memory, `nvidia-smi`, and the Docker
-NVIDIA runtime. On Mac it verifies architecture and unified memory. Detection
-does not install or change host software.
+matrix. On CUDA it finds an NVIDIA display/3D PCI controller before a driver
+exists. The installer then provisions the signed Ubuntu driver and container
+stack, verifies host GPU memory, and executes a tensor operation in the
+digest-pinned CUDA runtime image. On Mac it verifies architecture and unified
+memory. Detection itself does not install or change host software.
 
 The validated CUDA baseline uses a 2048-token generation context and eager
 execution. Both profiles use the same pinned 768-dimensional EmbeddingGemma

@@ -220,4 +220,15 @@ sovereign_engine_stop_managed
 sovereign_engine_purge_managed
 [[ ! -s "$ENGINE_TEST_LOG" ]]
 
+# Host-wide Docker installed for Ubuntu is managed for repair selection only;
+# lifecycle commands never stop or remove the shared system daemon/packages.
+export SOVEREIGN_HOME="$TEST_ROOT/managed-docker-home"
+sovereign_engine_write_state managed-docker 1 "$TEST_ROOT/bin/docker" default
+unset SOVEREIGN_ENGINE_LOADED SOVEREIGN_ENGINE_READY
+sovereign_engine_load
+: > "$ENGINE_TEST_LOG"
+sovereign_engine_stop_managed
+sovereign_engine_purge_managed
+[[ ! -s "$ENGINE_TEST_LOG" ]]
+
 echo "container-engine tests passed"

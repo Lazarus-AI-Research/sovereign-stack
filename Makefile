@@ -27,10 +27,15 @@ test-contracts: ## Validate schemas and checked-in configuration contracts
 	python3 release/validate_contracts.py
 
 test-scripts: ## Parse every shipped shell entrypoint
-	bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/postinst
+	bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
 	chmod +x tests/fixtures/bin/* tests/scripts/*.sh
 	tests/scripts/release-artifacts.sh
 	tests/scripts/install-lifecycle.sh
+	tests/scripts/container-engine.sh
+	tests/scripts/hardware-detection.sh
+	tests/scripts/ubuntu-provisioning.sh
+	tests/scripts/ubuntu-install-resume.sh
+	tests/scripts/linux-package-entrypoint.sh
 
 validate: test web compose-validate ## Run the local release contract gates
 

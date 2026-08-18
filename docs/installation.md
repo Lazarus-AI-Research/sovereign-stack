@@ -7,14 +7,21 @@ SovereignStack v0.1 supports two certified host profiles:
   Homebrew, Colima, Lima, Docker CLI, and Compose are not prerequisites: when
   no compatible engine is available, the installer provisions its own pinned
   Colima toolchain and private VM.
-- Ubuntu 24.04 x86_64 with one NVIDIA GPU exposing at least 24 GB VRAM, Docker Engine with Compose v2, the NVIDIA driver, and NVIDIA Container Toolkit.
+- Ubuntu 24.04 x86_64 with an NVIDIA display or 3D controller and at least one
+  GPU exposing 24 GB VRAM. The NVIDIA driver, Docker Engine, Compose, and
+  NVIDIA Container Toolkit are installed and configured by the installer
+  after one administrator approval; they are not prerequisites.
 
 On macOS the installer owns only its private `sovereign` Colima profile and
 never changes the user's active Docker context. Existing compatible engines
-are reused without being stopped, upgraded, reconfigured, or removed. The
-Ubuntu dependency-provisioning path is still under implementation, so the
-listed Linux container and NVIDIA prerequisites remain required in this
-release candidate.
+are reused without being stopped, upgraded, reconfigured, or removed.
+
+On Ubuntu, PCI hardware is detected before a driver exists. Driver and
+container packages come from authenticated Ubuntu, Docker, and NVIDIA
+repositories whose signing-key fingerprints are checked before trust is
+installed. A driver or Docker-group change records a private resume journal,
+enables a narrowly scoped user systemd unit, and continues automatically after
+the required reboot. Host Docker packages are preserved during uninstall.
 
 ## One-command install
 
@@ -23,8 +30,11 @@ When Apple credentials are configured, the macOS package is Developer ID
 signed, notarized, and stapled. Otherwise its filename ends in `-unsigned.pkg`
 and macOS displays the expected Gatekeeper warnings. Opening either package
 installs a small native bootstrap and starts the same signed, version-pinned
-installation in the background; the portal opens as soon as the control plane
-is ready. Every native package has detached Sigstore and SHA-256 verification
+installation. After dpkg releases its package lock, the Ubuntu package uses a
+persistent systemd coordinator and prints one `journalctl` command for live
+progress and durable errors; it never hides failure in a detached `nohup` job.
+It resumes after a required reboot. The portal opens as soon as the control
+plane is ready. Every native package has detached Sigstore and SHA-256 verification
 artifacts on the release page, including the explicitly unsigned macOS package.
 The default local portal address is <http://127.0.0.1:54854/>.
 
@@ -49,6 +59,13 @@ provisions the generation runtime and embedding service while **Activity**
 reports progress. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.
+
+CUDA offline bundles currently contain all application images and optional
+models, but not the kernel-specific Ubuntu/NVIDIA package closure. A fresh
+Ubuntu host therefore needs network access for its first host-provisioning
+stage; after a completed online install, ordinary `down`/`up` and bundle image
+loading remain offline. The installer fails closed instead of reaching the
+network when a fresh CUDA install is explicitly given an offline bundle.
 
 The appliance is installed under `~/.sovereign`; the management command is
 placed at `~/.local/bin/sovereign`. Add that directory to `PATH` if needed.

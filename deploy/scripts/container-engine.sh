@@ -260,6 +260,58 @@ sovereign_engine_probe_compatibility() {
   }
 }
 
+sovereign_engine_manifest_image() {
+  local manifest="$1" name="$2"
+  awk -v name="$name" '
+    index($0, "\"name\"") && index($0, "\"" name "\"") { inside=1 }
+    inside && index($0, "\"reference\"") {
+      reference=$0
+      sub("^.*\"reference\"[[:space:]]*:[[:space:]]*\"", "", reference)
+      sub("\".*$", "", reference)
+    }
+    inside && index($0, "\"digest\"") {
+      digest=$0
+      sub("^.*\"digest\"[[:space:]]*:[[:space:]]*\"", "", digest)
+      sub("\".*$", "", digest)
+    }
+    inside && reference != "" && digest != "" { print reference "@" digest; exit }
+    inside && $0 ~ /^[[:space:]]*},?[[:space:]]*$/ { exit }
+  ' "$manifest"
+}
+
+sovereign_engine_probe_cuda() {
+  local manifest="$1" gpu_index="${2:-0}" image
+  [[ "$gpu_index" =~ ^[0-9]+$ ]] || {
+    sovereign_engine_error "the selected CUDA GPU index is invalid"
+    return 1
+  }
+  image="$(sovereign_engine_manifest_image "$manifest" sovereign-runtime-cuda)"
+  if [[ -z "$image" && "$manifest" == */release-source.json ]]; then
+    image="${SOVEREIGN_TEST_CUDA_PROBE_IMAGE:-}"
+  fi
+  [[ "$image" =~ ^[A-Za-z0-9._/:@-]+@sha256:[0-9a-f]{64}$ ]] || {
+    sovereign_engine_error "the release manifest has no digest-pinned CUDA probe image"
+    return 1
+  }
+  if [[ "${SOVEREIGN_ENGINE_OFFLINE:-0}" == 1 ]]; then
+    sovereign_engine_docker image inspect "$image" >/dev/null 2>&1 || {
+      sovereign_engine_error "the offline bundle does not contain CUDA probe image $image"
+      return 1
+    }
+  else
+    sovereign_engine_docker pull "$image" >/dev/null || {
+      sovereign_engine_error "could not pull pinned CUDA probe image $image"
+      return 1
+    }
+  fi
+  sovereign_engine_docker run --rm --gpus "device=$gpu_index" --entrypoint python3 "$image" -c \
+    'import torch; assert torch.cuda.is_available(); value=torch.ones(1, device="cuda") + 1; assert value.item() == 2' \
+    >/dev/null || {
+      sovereign_engine_error "the pinned runtime could not execute a minimal CUDA tensor operation"
+      return 1
+    }
+}
+
 sovereign_engine_record_existing() {
   local docker_cli docker_context
   docker_cli="${SOVEREIGN_DOCKER_CLI:-$(command -v docker 2>/dev/null || true)}"

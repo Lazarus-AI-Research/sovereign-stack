@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Minimal Docker CLI fixture for non-mutating installer lifecycle tests.
 set -euo pipefail
+[[ -z "${SOVEREIGN_TEST_DOCKER_LOG:-}" ]] || printf '%s\n' "$*" >> "$SOVEREIGN_TEST_DOCKER_LOG"
+fixture_context=""
 while [[ "${1:-}" == --context || "${1:-}" == --config ]]; do
+  [[ "$1" != --context ]] || fixture_context="$2"
   shift 2
 done
 case "${1:-}" in
@@ -20,7 +23,7 @@ case "${1:-}" in
   info)
     case "$*" in
       *'{{.Architecture}}'*)
-        if [[ -n "${DOCKER_CONFIG:-}" ]]; then
+        if [[ "$fixture_context" == colima-sovereign ]]; then
           printf 'arm64\n'
         elif [[ -n "${SOVEREIGN_TEST_DOCKER_ARCH:-}" ]]; then
           printf '%s\n' "$SOVEREIGN_TEST_DOCKER_ARCH"

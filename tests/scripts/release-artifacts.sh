@@ -138,6 +138,7 @@ for profile in metal-arm64 cuda-x86_64; do
       "$home/compose.yml"
   done
   if [[ "$profile" == cuda-x86_64 ]]; then
+    grep -qx 'SOVEREIGN_CUDA_GPU_INDEX=' "$home/.env"
     grep -Eq '^SOVEREIGN_EMBEDDINGS_IMAGE=ghcr.io/lazarus-ai-research/[^@]+@sha256:[0-9a-f]{64}$' "$home/.env"
     grep -Eq 'image: ghcr.io/lazarus-ai-research/sovereign-embeddings:[^ ]+@sha256:[0-9a-f]{64}$' \
       "$home/compose.yml"

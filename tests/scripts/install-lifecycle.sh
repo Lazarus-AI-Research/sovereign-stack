@@ -7,6 +7,11 @@ trap 'rm -rf "$TEST_HOME"' EXIT
 mkdir -p "$TEST_HOME/user-home"
 export HOME="$TEST_HOME/user-home"
 export PATH="$ROOT/tests/fixtures/bin:$PATH"
+export SOVEREIGN_SYSFS_ROOT="$TEST_HOME/sys"
+export SOVEREIGN_TEST_CUDA_PROBE_IMAGE="example.test/sovereign-runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+mkdir -p "$SOVEREIGN_SYSFS_ROOT/bus/pci/devices/0000:01:00.0"
+printf '0x10de\n' > "$SOVEREIGN_SYSFS_ROOT/bus/pci/devices/0000:01:00.0/vendor"
+printf '0x030200\n' > "$SOVEREIGN_SYSFS_ROOT/bus/pci/devices/0000:01:00.0/class"
 VERSION="$(<"$ROOT/VERSION")"
 
 SOVEREIGN_HOME="$TEST_HOME" \
@@ -235,6 +240,16 @@ SOVEREIGN_SKIP_START=1 \
   "$ROOT/deploy/scripts/install.sh" --profile cuda-x86_64
 [[ "$(readlink "$CUDA_HOME/current")" == "$CUDA_HOME/releases/$VERSION" ]]
 grep -qx "SOVEREIGN_VERSION=$VERSION" "$CUDA_HOME/.env"
+grep -qx 'SOVEREIGN_CUDA_GPU_INDEX=0' "$CUDA_HOME/.env"
+SOVEREIGN_TEST_UNAME_S=Linux \
+SOVEREIGN_TEST_UNAME_M=x86_64 \
+SOVEREIGN_OS_RELEASE="$ROOT/tests/fixtures/os-release" \
+SOVEREIGN_HOME="$CUDA_HOME" \
+SOVEREIGN_INCLUDE_MODELS=0 \
+SOVEREIGN_SKIP_START=1 \
+  "$CUDA_HOME/bin/sovereign" repair > "$TEST_HOME/cuda-repair.log"
+grep -q 'Ubuntu host dependencies and container engine repaired' "$TEST_HOME/cuda-repair.log"
+grep -qx 'stage=complete' "$CUDA_HOME/state/install-journal.env"
 
 # Exercise bundle creation and a fresh offline install without downloading
 # weights. The bundle must carry the complete installer toolchain so the fresh

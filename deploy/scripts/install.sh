@@ -15,6 +15,7 @@ REPOSITORY="${SOVEREIGN_GITHUB_REPOSITORY:-Lazarus-AI-Research/sovereign-stack}"
 RELEASE_URL="${SOVEREIGN_RELEASE_URL:-}"
 OFFLINE_BUNDLE=""
 OFFLINE_MODE=0
+RESUME_MODE=0
 EMBEDDINGGEMMA_MODEL_REPOSITORY=ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
 EMBEDDINGGEMMA_MODEL_REVISION=8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73
 EMBEDDINGGEMMA_MODEL_ARTIFACT=embeddinggemma-300M-qat-Q4_0.gguf
@@ -28,14 +29,26 @@ while [[ $# -gt 0 ]]; do
     --access) ACCESS_MODE="$2"; shift 2 ;;
     --domain) ACCESS_MODE=domain; ACCESS_TARGET="$2"; shift 2 ;;
     --offline-bundle) OFFLINE_BUNDLE="$2"; shift 2 ;;
+    --resume) RESUME_MODE=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
+if [[ -n "$OFFLINE_BUNDLE" && "$OFFLINE_BUNDLE" != /* ]]; then
+  OFFLINE_BUNDLE="$PWD/$OFFLINE_BUNDLE"
+fi
+
 RELEASE_URL="${RELEASE_URL:-https://github.com/$REPOSITORY/releases/download/v$VERSION}"
 
 say() { printf '\n==> %s\n' "$*"; }
-die() { echo "error: $*" >&2; exit 1; }
+die() {
+  if [[ -n "${SOVEREIGN_HOME:-}" && "$SOVEREIGN_HOME" != / && "$SOVEREIGN_HOME" != "$HOME" ]] &&
+     declare -F journal_stage >/dev/null 2>&1; then
+    journal_stage failed "$*" || true
+  fi
+  echo "error: $*" >&2
+  exit 1
+}
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
@@ -91,6 +104,41 @@ file_bytes() {
   else stat -c %s "$1"; fi
 }
 
+[[ "$SOVEREIGN_HOME" != / && "$SOVEREIGN_HOME" != "$HOME" && -n "$SOVEREIGN_HOME" ]] || \
+  die "refusing unsafe SOVEREIGN_HOME: $SOVEREIGN_HOME"
+if (( EUID == 0 )); then
+  die "run the installer as the login user who will own the appliance; it requests administrator approval only for host provisioning"
+fi
+
+journal_stage() {
+  local stage="$1" detail="${2:-}" journal temporary
+  [[ "$stage" =~ ^[a-z0-9-]+$ && "$detail" != *$'\n'* && "$detail" != *$'\r'* ]] || return 1
+  journal="$SOVEREIGN_HOME/state/install-journal.env"
+  mkdir -p "$SOVEREIGN_HOME/state"
+  temporary="$journal.tmp.$$"
+  umask 077
+  {
+    printf 'schema_version=1\n'
+    printf 'version=%s\n' "$VERSION"
+    printf 'profile=%s\n' "$PROFILE"
+    printf 'stage=%s\n' "$stage"
+    printf 'detail=%s\n' "$detail"
+    printf 'updated_at=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  } > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$journal"
+}
+
+run_privileged() {
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  elif command -v pkexec >/dev/null 2>&1; then
+    pkexec "$@"
+  else
+    die "Ubuntu host setup needs one administrator approval, but neither sudo nor pkexec is available"
+  fi
+}
+
 for command in curl tar openssl; do need "$command"; done
 
 SCRIPT_DIR=""
@@ -121,6 +169,7 @@ if [[ -z "$PROFILE" ]]; then
   fi
 fi
 [[ "$PROFILE" == metal-arm64 || "$PROFILE" == cuda-x86_64 ]] || die "unsupported profile $PROFILE"
+journal_stage preflight "checking $PROFILE host"
 if [[ -z "$ACCESS_MODE" ]]; then
   # A loopback-only result is unusable over SSH. Default headless installs to
   # the private LAN; local desktop installs remain loopback-only.
@@ -137,6 +186,7 @@ say "Checking $PROFILE prerequisites"
 HOST_MEMORY_BYTES=""
 GPU_VRAM_MIB=""
 GPU_NAME=""
+GPU_INDEX=""
 if [[ "$PROFILE" == metal-arm64 ]]; then
   [[ "$(uname -s)-$(uname -m)" == Darwin-arm64 ]] || die "metal-arm64 requires an Apple Silicon Mac"
   MEMORY="$(sysctl -n hw.memsize)"
@@ -152,12 +202,6 @@ else
   OS_ID="$(. "$OS_RELEASE" && printf '%s' "${ID:-}")"
   OS_VERSION_ID="$(. "$OS_RELEASE" && printf '%s' "${VERSION_ID:-}")"
   [[ "$OS_ID" == ubuntu && "$OS_VERSION_ID" == 24.04 ]] || die "CUDA v0.1.0 requires Ubuntu 24.04"
-  need nvidia-smi
-  VRAM="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i 0 | head -n1 | tr -d ' ')"
-  (( VRAM >= 24576 )) || die "GPU 0 must provide at least 24GB VRAM"
-  GPU_VRAM_MIB="$VRAM"
-  GPU_NAME="$( { nvidia-smi --query-gpu=name --format=csv,noheader -i 0 2>/dev/null || true; } | head -n1 | tr -d '\r')"
-  GPU_NAME="${GPU_NAME:-NVIDIA GPU}"
   if [[ -r /proc/meminfo ]]; then
     HOST_MEMORY_BYTES="$(( $(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo) * 1024 ))"
   elif command -v sysctl >/dev/null 2>&1; then
@@ -244,6 +288,7 @@ elif [[ -z "$SOURCE_DIR" ]]; then
 fi
 
 [[ -n "$SOURCE_DIR" && -f "$SOURCE_DIR/deploy/compose/compose.yml" ]] || die "release deployment files are missing"
+journal_stage source-verified "release $VERSION is available"
 
 # Component versions and download locations are delegated by the reviewed,
 # signed release manifest. Developer-source installs read the same fields from
@@ -275,11 +320,160 @@ fi
    "$EMBEDDINGGEMMA_METAL_BYTES" =~ ^[1-9][0-9]*$ ]] || \
   die "release manifest has an invalid EmbeddingGemma contract"
 
+UBUNTU_MANAGED_DOCKER=0
+if [[ "$PROFILE" == cuda-x86_64 ]]; then
+  HARDWARE_LIB="$SOURCE_DIR/deploy/scripts/hardware.sh"
+  PROVISIONER="$SOURCE_DIR/deploy/scripts/provision-ubuntu.sh"
+  [[ -r "$HARDWARE_LIB" && -r "$PROVISIONER" ]] || \
+    die "release Ubuntu hardware provisioning support is missing"
+  # shellcheck source=hardware.sh
+  source "$HARDWARE_LIB"
+  sovereign_has_nvidia_display_device || \
+    die "no NVIDIA display or 3D controller was found on PCIe"
+
+  ubuntu_stack_ready() {
+    sovereign_nvidia_driver_ready &&
+      command -v docker >/dev/null 2>&1 &&
+      docker --context default info >/dev/null 2>&1 &&
+      docker --context default compose version >/dev/null 2>&1 &&
+      docker --context default info --format '{{json .Runtimes}}' 2>/dev/null | grep -qi nvidia
+  }
+  provision_result_value() {
+    local file="$1" key="$2"
+    awk -v key="$key" 'index($0, key "=") == 1 {value=substr($0, length(key) + 2)} END {print value}' "$file"
+  }
+  stage_reboot_resume() {
+    local bootstrap staging resume_script unit_dir wants_dir install_id unit_name unit_file escaped_resume item
+    bootstrap="$SOVEREIGN_HOME/bootstrap"
+    staging="$bootstrap/.release.tmp.$$"
+    resume_script="$bootstrap/resume.sh"
+    mkdir -p "$bootstrap"
+    rm -rf "$staging"
+    mkdir -p "$staging"
+    cp -R "$SOURCE_DIR/deploy" "$staging/deploy"
+    for item in VERSION LICENSE NOTICE THIRD_PARTY_NOTICES.md schemas docs api release; do
+      [[ -e "$SOURCE_DIR/$item" ]] && cp -R "$SOURCE_DIR/$item" "$staging/$item"
+    done
+    rm -rf "$bootstrap/release"
+    mv "$staging" "$bootstrap/release"
+
+    {
+      printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nexec env '
+      printf 'SOVEREIGN_HOME=%q SOVEREIGN_BIN_DIR=%q SOVEREIGN_SOURCE_DIR=%q SOVEREIGN_RESUME=1 SOVEREIGN_AUTO_REBOOT=0 ' \
+        "$SOVEREIGN_HOME" "$BIN_DIR" "$bootstrap/release"
+      printf '/bin/bash %q --resume --version %q --home %q --profile %q --access %q' \
+        "$bootstrap/release/deploy/scripts/install.sh" "$VERSION" "$SOVEREIGN_HOME" "$PROFILE" "$ACCESS_MODE"
+      [[ -z "$OFFLINE_BUNDLE" ]] || printf ' --offline-bundle %q' "$OFFLINE_BUNDLE"
+      [[ "$ACCESS_MODE" != domain ]] || printf ' --domain %q' "$ACCESS_TARGET"
+      printf '\n'
+    } > "$resume_script"
+    chmod 700 "$resume_script"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+      install_id="$(printf '%s' "$SOVEREIGN_HOME" | sha256sum | awk '{print substr($1, 1, 12)}')"
+    else
+      install_id="$(printf '%s' "$SOVEREIGN_HOME" | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
+    fi
+    unit_name="sovereign-stack-install-$install_id.service"
+    unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    wants_dir="$unit_dir/default.target.wants"
+    unit_file="$unit_dir/$unit_name"
+    mkdir -p "$wants_dir"
+    escaped_resume="$(printf '%s' "$resume_script" | sed 's/%/%%/g; s/\\/\\\\/g; s/"/\\"/g')"
+    {
+      printf '[Unit]\nDescription=Resume SovereignStack installation after host provisioning\n'
+      printf 'StartLimitIntervalSec=600\nStartLimitBurst=10\n\n'
+      printf '[Service]\nType=oneshot\nExecStart=/bin/bash "%s"\n' "$escaped_resume"
+      printf 'Restart=on-failure\nRestartSec=30\nTimeoutStartSec=infinity\n\n'
+      printf '[Install]\nWantedBy=default.target\n'
+    } > "$unit_file"
+    chmod 600 "$unit_file"
+    ln -sfn "$unit_file" "$wants_dir/$unit_name"
+    printf '%s\n' "$unit_file" > "$SOVEREIGN_HOME/state/install-resume-unit"
+    chmod 600 "$SOVEREIGN_HOME/state/install-resume-unit"
+    journal_stage awaiting-reboot "Ubuntu host dependencies installed; automatic resume is enabled"
+  }
+  request_reboot() {
+    echo
+    echo "Ubuntu host dependencies are installed. SovereignStack will resume automatically after reboot."
+    echo "Status journal: $SOVEREIGN_HOME/state/install-journal.env"
+    if [[ -s "$SOVEREIGN_HOME/state/install-resume-unit" ]]; then
+      echo "Resume status: systemctl --user status $(basename "$(<"$SOVEREIGN_HOME/state/install-resume-unit")")"
+    fi
+    echo "Manual resume: bash $SOVEREIGN_HOME/bootstrap/resume.sh"
+    if [[ "${SOVEREIGN_AUTO_REBOOT:-1}" != 1 || "${SOVEREIGN_TEST_NO_REBOOT:-0}" == 1 ]]; then
+      if (( RESUME_MODE == 1 )); then
+        echo "The NVIDIA stack is not ready yet; the resume service will retry."
+        exit 75
+      else
+        echo "Reboot this host to continue the installation."
+        exit 194
+      fi
+    fi
+    echo "Rebooting in 10 seconds; press Ctrl-C to postpone."
+    sleep 10
+    run_privileged /bin/bash "$PROVISIONER" --reboot || die "automatic reboot failed; reboot manually to continue"
+    exit 194
+  }
+
+  RESULT_FILE="${SOVEREIGN_UBUNTU_PROVISION_RESULT:-/var/lib/sovereign-stack/provision-$(id -u).env}"
+  PENDING_REBOOT=0
+  if [[ -n "${SOVEREIGN_TEST_BOOT_ID:-}" ]]; then
+    CURRENT_BOOT_ID="$SOVEREIGN_TEST_BOOT_ID"
+  elif [[ -r /proc/sys/kernel/random/boot_id ]]; then
+    CURRENT_BOOT_ID="$(</proc/sys/kernel/random/boot_id)"
+  else
+    CURRENT_BOOT_ID=unknown
+  fi
+  if [[ -r "$RESULT_FILE" && "$(provision_result_value "$RESULT_FILE" owner_uid)" == "$(id -u)" ]]; then
+    UBUNTU_MANAGED_DOCKER="$(provision_result_value "$RESULT_FILE" managed_docker)"
+    [[ "$UBUNTU_MANAGED_DOCKER" == 1 ]] || UBUNTU_MANAGED_DOCKER=0
+    if [[ "$(provision_result_value "$RESULT_FILE" reboot_required)" == 1 &&
+          "$(provision_result_value "$RESULT_FILE" boot_id)" == "$CURRENT_BOOT_ID" ]]; then
+      PENDING_REBOOT=1
+    fi
+  fi
+
+  if (( PENDING_REBOOT == 1 )); then
+    stage_reboot_resume
+    request_reboot
+  fi
+  if ! ubuntu_stack_ready; then
+    say "Provisioning Ubuntu, Docker, and NVIDIA host dependencies"
+    journal_stage host-provisioning "administrator approval may be requested"
+    PROVISION_RESULT="$TMP_ROOT/ubuntu-provision-result.log"
+    PROVISION_ARGS=(--owner "$(id -un)")
+    (( OFFLINE_MODE == 0 )) || PROVISION_ARGS+=(--offline)
+    if ! run_privileged /bin/bash "$PROVISIONER" "${PROVISION_ARGS[@]}" | tee "$PROVISION_RESULT"; then
+      die "Ubuntu host dependency provisioning failed; appliance data is unchanged"
+    fi
+    RESULT_FILE="$(sed -n 's/^result_file=//p' "$PROVISION_RESULT" | tail -n 1)"
+    [[ -n "$RESULT_FILE" && -r "$RESULT_FILE" ]] || \
+      die "Ubuntu provisioner did not produce a readable result"
+    [[ "$(provision_result_value "$RESULT_FILE" owner_uid)" == "$(id -u)" ]] || \
+      die "Ubuntu provisioner result belongs to another user"
+    UBUNTU_MANAGED_DOCKER="$(provision_result_value "$RESULT_FILE" managed_docker)"
+    [[ "$UBUNTU_MANAGED_DOCKER" == 1 ]] || UBUNTU_MANAGED_DOCKER=0
+    if [[ "$(provision_result_value "$RESULT_FILE" reboot_required)" == 1 ]]; then
+      stage_reboot_resume
+      request_reboot
+    fi
+  fi
+
+  DETAILS="$(sovereign_nvidia_gpu_details)" || \
+    die "the NVIDIA driver is installed but nvidia-smi cannot enumerate a GPU"
+  IFS=$'\t' read -r GPU_INDEX GPU_VRAM_MIB GPU_NAME <<< "$DETAILS"
+  (( GPU_VRAM_MIB >= 24576 )) || die "the largest NVIDIA GPU must provide at least 24GB VRAM"
+  GPU_NAME="${GPU_NAME:-NVIDIA GPU}"
+  journal_stage host-ready "NVIDIA GPU $GPU_INDEX: $GPU_VRAM_MIB MiB"
+fi
+
 ENGINE_LIB="$SOURCE_DIR/deploy/scripts/container-engine.sh"
 [[ -r "$ENGINE_LIB" ]] || die "release container-engine support is missing"
 # shellcheck source=container-engine.sh
 source "$ENGINE_LIB"
 say "Preparing the container engine"
+journal_stage engine "selecting and probing the container engine"
 SOVEREIGN_ENGINE_MANIFEST="$COMPONENT_MANIFEST"
 SOVEREIGN_ENGINE_OFFLINE="$OFFLINE_MODE"
 if (( OFFLINE_MODE == 1 )) && [[ "$PROFILE" == metal-arm64 ]]; then
@@ -292,6 +486,20 @@ if (( OFFLINE_MODE == 1 )) && [[ "$PROFILE" == metal-arm64 ]]; then
 fi
 export SOVEREIGN_ENGINE_MANIFEST SOVEREIGN_ENGINE_OFFLINE
 export SOVEREIGN_ENGINE_ARTIFACT_DIR SOVEREIGN_COSIGN
+if [[ "$PROFILE" == cuda-x86_64 && ! -e "$(sovereign_engine_state_file)" ]]; then
+  PRIVATE_DOCKER_CONFIG="$SOVEREIGN_HOME/state/docker-config"
+  mkdir -p "$PRIVATE_DOCKER_CONFIG"
+  [[ -f "$PRIVATE_DOCKER_CONFIG/config.json" ]] || printf '{}\n' > "$PRIVATE_DOCKER_CONFIG/config.json"
+  chmod 700 "$PRIVATE_DOCKER_CONFIG"
+  chmod 600 "$PRIVATE_DOCKER_CONFIG/config.json"
+  if [[ "$UBUNTU_MANAGED_DOCKER" == 1 ]]; then
+    sovereign_engine_write_state managed-docker 1 "$(command -v docker)" default "$PRIVATE_DOCKER_CONFIG" || \
+      die "could not record the installer-managed Ubuntu engine"
+  else
+    sovereign_engine_write_state existing 0 "$(command -v docker)" default "$PRIVATE_DOCKER_CONFIG" || \
+      die "could not record the compatible Ubuntu engine"
+  fi
+fi
 sovereign_engine_require || die \
   "container-engine setup could not complete; existing appliance data is safe"
 if [[ -n "${OFFLINE_IMAGES:-}" && -f "$OFFLINE_IMAGES" ]]; then
@@ -314,9 +522,12 @@ fi
 if [[ "$PROFILE" == cuda-x86_64 ]]; then
   sovereign_engine_docker info --format '{{json .Runtimes}}' | grep -qi nvidia || \
     die "NVIDIA Container Toolkit is not configured for the selected engine"
+  sovereign_engine_probe_cuda "$COMPONENT_MANIFEST" "$GPU_INDEX" || \
+    die "NVIDIA GPU verification failed inside the pinned CUDA runtime container"
 fi
 
 say "Installing release assets"
+journal_stage release "installing release assets"
 RELEASES="$SOVEREIGN_HOME/releases"
 TARGET="$RELEASES/$VERSION"
 STAGING="$RELEASES/.${VERSION}.tmp.$$"
@@ -361,7 +572,7 @@ SOVEREIGN_HOME="$SOVEREIGN_HOME" SOVEREIGN_PROFILE="$PROFILE" SOVEREIGN_VERSION=
   SOVEREIGN_ACCESS_MODE="$ACCESS_MODE" SOVEREIGN_SITE_ADDRESS="${SOVEREIGN_SITE_ADDRESS:-}" \
   SOVEREIGN_HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')" SOVEREIGN_HOST_ARCH="$(uname -m)" \
   SOVEREIGN_HOST_MEMORY_BYTES="$HOST_MEMORY_BYTES" SOVEREIGN_GPU_NAME="$GPU_NAME" \
-  SOVEREIGN_GPU_VRAM_MIB="$GPU_VRAM_MIB" \
+  SOVEREIGN_GPU_VRAM_MIB="$GPU_VRAM_MIB" SOVEREIGN_CUDA_GPU_INDEX="$GPU_INDEX" \
   SOVEREIGN_RELEASE_ROOT="$TARGET" "$TARGET/deploy/scripts/generate-config.sh"
 if (( OFFLINE_MODE == 1 )); then
   : > "$SOVEREIGN_HOME/state/offline"
@@ -452,6 +663,7 @@ download_hf() {
     "$role" "${file//\"/}" "$(wc -c < "$destination")" "$(wc -c < "$destination")" "$started" > "$SOVEREIGN_HOME/state/install-progress.json"
 }
 
+journal_stage models "installing selected runtimes and model weights"
 if [[ "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; then
   say "Installing pinned EmbeddingGemma model"
   EMBEDDING_MODEL_DIR="$SOVEREIGN_HOME/models/embeddinggemma"
@@ -556,9 +768,26 @@ fi
 
 if [[ "${SOVEREIGN_SKIP_START:-0}" != 1 ]]; then
   say "Completing SovereignStack startup"
+  journal_stage startup "starting services and running health gates"
   SOVEREIGN_HOME="$SOVEREIGN_HOME" "$BIN_DIR/sovereign" up
 else
   say "Installation staged; start skipped by SOVEREIGN_SKIP_START=1"
+fi
+
+journal_stage complete "SovereignStack $VERSION installed successfully"
+if [[ -s "$SOVEREIGN_HOME/state/install-resume-unit" ]]; then
+  RESUME_UNIT="$(<"$SOVEREIGN_HOME/state/install-resume-unit")"
+  EXPECTED_UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  if [[ "$RESUME_UNIT" == "$EXPECTED_UNIT_DIR"/sovereign-stack-install-*.service ]]; then
+    rm -f "$EXPECTED_UNIT_DIR/default.target.wants/$(basename "$RESUME_UNIT")" "$RESUME_UNIT"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+  fi
+  rm -f "$SOVEREIGN_HOME/state/install-resume-unit"
+fi
+if [[ -d "$SOVEREIGN_HOME/bootstrap" ]]; then
+  rm -f "$SOVEREIGN_HOME/bootstrap/resume.sh"
+  rm -rf "$SOVEREIGN_HOME/bootstrap/release"
+  rmdir "$SOVEREIGN_HOME/bootstrap" 2>/dev/null || true
 fi
 
 echo

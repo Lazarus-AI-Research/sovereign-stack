@@ -264,6 +264,17 @@ bundle, including the Colima guest disk image; a hermetic fresh install proves
 that this path makes no network call.
 
 Item 3 still needs disposable-VM repetition and damaged-VM validation beyond
-the hermetic recovery tests. Items 4 through 8 remain open, including Ubuntu
-driver/container provisioning, the shared bootstrap state machine, visible
-package progress, and the clean-machine release matrix.
+the hermetic recovery tests. Item 4 is implemented for online Ubuntu installs:
+driverless PCI detection, fingerprint-checked Docker/NVIDIA repositories,
+Ubuntu driver selection, Docker/Compose and NVIDIA Toolkit reconciliation,
+an install-scoped reboot journal and user-systemd resume unit, host VRAM
+selection, and a digest-pinned CUDA tensor probe all have hermetic coverage.
+The Linux package now schedules a persistent systemd coordinator after dpkg
+releases its lock and prints its live `journalctl`/status commands instead of
+launching an invisible `nohup` job.
+
+Item 4 is not release-complete until it passes on a reset Ubuntu 24.04 NVIDIA
+host through the real reboot and first inference journey. A portable,
+kernel-matched offline Ubuntu package closure also remains open. Items 5
+through 8 remain open, including the cross-platform bootstrap state machine,
+the macOS progress launcher, and the full clean-machine release matrix.

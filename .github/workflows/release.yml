@@ -33,7 +33,7 @@ jobs:
         run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
       - name: Shell and repository checks
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/postinst
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
           chmod +x tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
           git diff --check
@@ -63,17 +63,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Ubuntu installer package
         run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          ROOT="$RUNNER_TEMP/sovereign-deb"
-          mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
-          cp deploy/scripts/install.sh "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          cp VERSION "$ROOT/usr/local/share/sovereign-stack/VERSION"
-          cp packaging/sovereign-install "$ROOT/usr/local/bin/sovereign-install"
-          cp packaging/linux/postinst "$ROOT/DEBIAN/postinst"
-          chmod 755 "$ROOT/DEBIAN/postinst" "$ROOT/usr/local/bin/sovereign-install" "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          printf 'Package: sovereign-stack-installer\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Lazarus AI Research <support@lazarusai.com>\nDepends: bash, curl, tar, openssl\nDescription: One-click SovereignStack private AI appliance installer\n' "$VERSION" > "$ROOT/DEBIAN/control"
-          dpkg-deb --build --root-owner-group "$ROOT" "SovereignStack-$VERSION-amd64.deb"
+          packaging/linux/build-package.sh \
+            --version "${GITHUB_REF_NAME#v}" --output-dir "$GITHUB_WORKSPACE"
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux

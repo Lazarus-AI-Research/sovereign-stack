@@ -519,8 +519,21 @@ case "${1:-help}" in
     ;;
   validate) compose config -q && echo "Compose configuration valid ($PROFILE)" ;;
   repair)
-    sovereign_engine_repair "$COMPONENT_MANIFEST" "$PROFILE"
-    echo "container engine repaired and compatibility checks passed"
+    if [[ "$PROFILE" == cuda-x86_64 && ! -f "$SOVEREIGN_HOME/state/offline" ]]; then
+      SOVEREIGN_HOME="$SOVEREIGN_HOME" \
+      SOVEREIGN_BIN_DIR="$(<"$SOVEREIGN_HOME/state/bin-dir")" \
+      SOVEREIGN_SOURCE_DIR="$CURRENT" \
+      SOVEREIGN_ACCESS_MODE="$CURRENT_ACCESS_MODE" \
+      SOVEREIGN_SITE_ADDRESS="$(env_value SOVEREIGN_SITE_ADDRESS)" \
+      SOVEREIGN_INCLUDE_MODELS=0 \
+      SOVEREIGN_SKIP_HOSTD_INSTALL=1 \
+      SOVEREIGN_SKIP_START=1 \
+        "$CURRENT/deploy/scripts/install.sh" --version "$(env_value SOVEREIGN_VERSION)" --profile "$PROFILE"
+      echo "Ubuntu host dependencies and container engine repaired and compatibility checks passed"
+    else
+      sovereign_engine_repair "$COMPONENT_MANIFEST" "$PROFILE"
+      echo "container engine repaired and compatibility checks passed"
+    fi
     ;;
   update)
     target_version="${2:-}"

@@ -36,10 +36,16 @@ Transfer the archive through the approved medium and install it on the target:
 
 The installer rejects unsafe archive paths, verifies every entry against
 `checksums.sha256`, checks profile and version equality, loads images, restores
-the optional model cache, provisions a private engine when none exists, and
-marks the installation offline so later starts do not pull. A missing tool,
-signature bundle, or probe image is a hard failure; offline installation never
-falls back to downloading it. Locally created bundles provide integrity but
-not signer identity; verify the signed online release before creating one and
-protect the transfer medium. Official release archives and runtime assets are
-independently signed with Sigstore.
+the optional model cache, provisions a private engine on macOS when none
+exists, and marks the installation offline so later starts do not pull. A
+missing tool, signature bundle, or probe image is a hard failure; offline
+installation never falls back to downloading it.
+
+The current CUDA bundle does not contain the kernel-specific Ubuntu driver,
+Docker, and NVIDIA Toolkit package closure. Create it only after completing
+online host provisioning on the target, or pre-provision an identical Ubuntu
+host through an approved package mirror. A fresh CUDA host with missing system
+packages fails closed. Locally created bundles provide integrity but not signer
+identity; verify the signed online release before creating one and protect the
+transfer medium. Official release archives and runtime assets are independently
+signed with Sigstore.
