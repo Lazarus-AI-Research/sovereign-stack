@@ -1,3 +1,3 @@
 # Repository Instructions
 
-<!-- Never add a Co-Authored-By trailer or otherwise designate a co-author. Commits must list only Eric Hartford <eric.hartford@lazarusai.com> as the author. -->
+<!-- Commits for this installer work must credit Auroter <7332587+auroter@users.noreply.github.com> as the author and committer. Do not designate another person or an AI system as an author or co-author unless Auroter explicitly requests it. -->
