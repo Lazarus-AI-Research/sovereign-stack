@@ -15,9 +15,6 @@ REPOSITORY="${SOVEREIGN_GITHUB_REPOSITORY:-Lazarus-AI-Research/sovereign-stack}"
 RELEASE_URL="${SOVEREIGN_RELEASE_URL:-}"
 OFFLINE_BUNDLE=""
 OFFLINE_MODE=0
-EMBEDDINGGEMMA_VERSION=v0.3.1
-EMBEDDINGGEMMA_METAL_ASSET=embeddinggemma-darwin-arm64-metal
-EMBEDDINGGEMMA_METAL_SHA256=c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5
 EMBEDDINGGEMMA_MODEL_REPOSITORY=ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
 EMBEDDINGGEMMA_MODEL_REVISION=8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73
 EMBEDDINGGEMMA_MODEL_ARTIFACT=embeddinggemma-300M-qat-Q4_0.gguf
@@ -59,6 +56,38 @@ verify_archive_paths() {
     [[ "$entry" != /* && "/$entry/" != *"/../"* ]] || \
       die "unsafe archive entry in $(basename "$archive"): $entry"
   done < <(tar -tzf "$archive")
+}
+component_value() {
+  local file="$1" component="$2" key="$3"
+  awk -v component="$component" -v key="$key" '
+    index($0, "\"" component "\"") && index($0, "{") { inside=1; next }
+    inside && index($0, "\"" key "\"") {
+      value=$0
+      sub("^.*\"" key "\"[[:space:]]*:[[:space:]]*\"", "", value)
+      sub("\".*$", "", value)
+      print value
+      exit
+    }
+    inside && $0 ~ /^[[:space:]]*},?[[:space:]]*$/ { exit }
+  ' "$file"
+}
+component_number() {
+  local file="$1" component="$2" key="$3"
+  awk -v component="$component" -v key="$key" '
+    index($0, "\"" component "\"") && index($0, "{") { inside=1; next }
+    inside && index($0, "\"" key "\"") {
+      value=$0
+      sub("^.*\"" key "\"[[:space:]]*:[[:space:]]*", "", value)
+      sub("[[:space:]]*,?[[:space:]]*$", "", value)
+      print value
+      exit
+    }
+    inside && $0 ~ /^[[:space:]]*},?[[:space:]]*$/ { exit }
+  ' "$file"
+}
+file_bytes() {
+  if stat -f %z "$1" >/dev/null 2>&1; then stat -f %z "$1"
+  else stat -c %s "$1"; fi
 }
 
 for command in curl tar openssl docker; do need "$command"; done
@@ -216,6 +245,36 @@ fi
 
 [[ -n "$SOURCE_DIR" && -f "$SOURCE_DIR/deploy/compose/compose.yml" ]] || die "release deployment files are missing"
 
+# Component versions and download locations are delegated by the reviewed,
+# signed release manifest. Developer-source installs read the same fields from
+# release-source.json so they exercise the release contract without pretending
+# that the stack and Metal-agent versions must be identical.
+COMPONENT_MANIFEST="$SOURCE_DIR/release/manifest.json"
+[[ -f "$COMPONENT_MANIFEST" ]] || COMPONENT_MANIFEST="$SOURCE_DIR/release/release-source.json"
+[[ -f "$COMPONENT_MANIFEST" ]] || die "release component manifest is missing"
+METAL_AGENT_VERSION="$(component_value "$COMPONENT_MANIFEST" metal_agent version)"
+METAL_AGENT_ARCHIVE="$(component_value "$COMPONENT_MANIFEST" metal_agent artifact)"
+METAL_AGENT_URL="$(component_value "$COMPONENT_MANIFEST" metal_agent url)"
+METAL_AGENT_SIGNATURE_URL="$(component_value "$COMPONENT_MANIFEST" metal_agent signature_url)"
+METAL_AGENT_SHA256="$(component_value "$COMPONENT_MANIFEST" metal_agent sha256)"
+METAL_AGENT_BYTES="$(component_number "$COMPONENT_MANIFEST" metal_agent bytes)"
+METAL_AGENT_SIGNER="$(component_value "$COMPONENT_MANIFEST" metal_agent signer_identity_regexp)"
+EMBEDDINGGEMMA_VERSION="$(component_value "$COMPONENT_MANIFEST" embedding_runtime version)"
+EMBEDDINGGEMMA_METAL_ASSET="$(component_value "$COMPONENT_MANIFEST" embedding_runtime artifact)"
+EMBEDDINGGEMMA_METAL_URL="$(component_value "$COMPONENT_MANIFEST" embedding_runtime url)"
+EMBEDDINGGEMMA_METAL_SHA256="$(component_value "$COMPONENT_MANIFEST" embedding_runtime sha256)"
+EMBEDDINGGEMMA_METAL_BYTES="$(component_number "$COMPONENT_MANIFEST" embedding_runtime bytes)"
+if [[ "$PROFILE" == metal-arm64 ]]; then
+  [[ -n "$METAL_AGENT_VERSION" && -n "$METAL_AGENT_ARCHIVE" && -n "$METAL_AGENT_URL" &&
+     -n "$METAL_AGENT_SIGNATURE_URL" && "$METAL_AGENT_SHA256" =~ ^[0-9a-f]{64}$ &&
+     "$METAL_AGENT_BYTES" =~ ^[1-9][0-9]*$ && -n "$METAL_AGENT_SIGNER" ]] || \
+    die "release manifest has an invalid Metal-agent contract"
+fi
+[[ -n "$EMBEDDINGGEMMA_VERSION" && -n "$EMBEDDINGGEMMA_METAL_ASSET" &&
+   -n "$EMBEDDINGGEMMA_METAL_URL" && "$EMBEDDINGGEMMA_METAL_SHA256" =~ ^[0-9a-f]{64}$ &&
+   "$EMBEDDINGGEMMA_METAL_BYTES" =~ ^[1-9][0-9]*$ ]] || \
+  die "release manifest has an invalid EmbeddingGemma contract"
+
 say "Installing release assets"
 RELEASES="$SOVEREIGN_HOME/releases"
 TARGET="$RELEASES/$VERSION"
@@ -313,6 +372,7 @@ download_hf() {
   tracked_curl() {
     local resume="$1" pid result current progress_tmp
     progress_tmp="$SOVEREIGN_HOME/state/install-progress.json.tmp"
+    [[ -f "$destination.part" ]] || : > "$destination.part"
     if [[ -n "${HF_TOKEN:-}" ]]; then
       if [[ "$resume" == true ]]; then curl -fL --retry 5 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url" &
       else curl -fL --retry 5 -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url" & fi
@@ -370,19 +430,27 @@ if [[ "$PROFILE" == metal-arm64 && "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; the
   AGENT_DIST="$SOVEREIGN_HOME/runtime-dist/$VERSION"
   if [[ ! -x "$AGENT_DIST/agent-dist/install-agent.sh" ]]; then
     (( OFFLINE_MODE == 0 )) || die "offline bundle does not contain the Metal runtime agent"
-    AGENT_ARCHIVE="sovereign-metal-agent-$VERSION-arm64.tar.gz"
-    RUNTIME_URL="${SOVEREIGN_RUNTIME_RELEASE_URL:-https://github.com/Lazarus-AI-Research/sovereign-vllm/releases/download/v$VERSION}"
-    curl -fsSL --retry 4 -o "$TMP_ROOT/$AGENT_ARCHIVE" "$RUNTIME_URL/$AGENT_ARCHIVE"
-    curl -fsSL --retry 4 -o "$TMP_ROOT/$AGENT_ARCHIVE.sha256" "$RUNTIME_URL/$AGENT_ARCHIVE.sha256"
-    verify_pair "$TMP_ROOT/$AGENT_ARCHIVE" "$TMP_ROOT/$AGENT_ARCHIVE.sha256"
-    curl -fsSL --retry 2 -o "$TMP_ROOT/$AGENT_ARCHIVE.sigstore.json" "$RUNTIME_URL/$AGENT_ARCHIVE.sigstore.json" || \
+    AGENT_ARCHIVE="$METAL_AGENT_ARCHIVE"
+    AGENT_URL="$METAL_AGENT_URL"
+    AGENT_SIGNATURE_URL="$METAL_AGENT_SIGNATURE_URL"
+    if [[ -n "${SOVEREIGN_RUNTIME_RELEASE_URL:-}" ]]; then
+      AGENT_URL="${SOVEREIGN_RUNTIME_RELEASE_URL%/}/$AGENT_ARCHIVE"
+      AGENT_SIGNATURE_URL="$AGENT_URL.sigstore.json"
+    fi
+    curl -fsSL --retry 4 -o "$TMP_ROOT/$AGENT_ARCHIVE" "$AGENT_URL"
+    [[ "$(sha256 "$TMP_ROOT/$AGENT_ARCHIVE")" == "$METAL_AGENT_SHA256" ]] || \
+      die "Metal agent checksum mismatch: $AGENT_ARCHIVE"
+    [[ "$(file_bytes "$TMP_ROOT/$AGENT_ARCHIVE")" == "$METAL_AGENT_BYTES" ]] || \
+      die "Metal agent size mismatch: $AGENT_ARCHIVE"
+    curl -fsSL --retry 2 -o "$TMP_ROOT/$AGENT_ARCHIVE.sigstore.json" "$AGENT_SIGNATURE_URL" || \
       die "Metal agent signature bundle is missing"
     install_cosign
     "$TMP_ROOT/cosign" verify-blob \
       --bundle "$TMP_ROOT/$AGENT_ARCHIVE.sigstore.json" \
-      --certificate-identity-regexp '^https://github.com/Lazarus-AI-Research/sovereign-vllm/.github/workflows/release.yml@refs/tags/v' \
+      --certificate-identity-regexp "$METAL_AGENT_SIGNER" \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       "$TMP_ROOT/$AGENT_ARCHIVE" >/dev/null
+    verify_archive_paths "$TMP_ROOT/$AGENT_ARCHIVE"
     mkdir -p "$AGENT_DIST"
     tar -xzf "$TMP_ROOT/$AGENT_ARCHIVE" -C "$AGENT_DIST"
   fi
@@ -397,6 +465,28 @@ if [[ "$PROFILE" == metal-arm64 && "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; the
     gemma-4-E2B-it-mmproj.gguf 58c187648007cab392bd5678b87e862c3e8794017deb945feea2cf256195e96a "$MODELS/gemma-4-E2B-it-mmproj.gguf"
   SOVEREIGN_AGENT_HOME="$SOVEREIGN_HOME" "$AGENT_DIST/agent-dist/install-agent.sh"
 
+  if [[ "${SOVEREIGN_SKIP_AGENT_HEALTH:-0}" != 1 ]]; then
+    say "Waiting for the Metal generation service"
+    AGENT_DEADLINE=$((SECONDS + ${SOVEREIGN_AGENT_TIMEOUT:-600}))
+    AGENT_LAST_UPDATE=$SECONDS
+    while true; do
+      if curl -fsS --max-time 5 -H "Authorization: Bearer $(<"$SOVEREIGN_HOME/agent.token")" \
+        http://127.0.0.1:9100/agent/manifest 2>/dev/null | \
+        grep -Eq '"generation"[^}]*"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+        break
+      fi
+      (( SECONDS < AGENT_DEADLINE )) || {
+        tail -n 80 "$SOVEREIGN_HOME/logs/agent.log" 2>/dev/null || true
+        die "Metal generation service did not become healthy; existing data is safe, see $SOVEREIGN_HOME/logs/agent.log"
+      }
+      if (( SECONDS - AGENT_LAST_UPDATE >= 15 )); then
+        echo "Metal generation service is still loading ($((SECONDS + ${SOVEREIGN_AGENT_TIMEOUT:-600} - AGENT_DEADLINE))s elapsed)..."
+        AGENT_LAST_UPDATE=$SECONDS
+      fi
+      sleep 2
+    done
+  fi
+
   EMBEDDING_DIST="$AGENT_DIST/embeddinggemma"
   EMBEDDING_BINARY="$EMBEDDING_DIST/embeddinggemma"
   if [[ ! -x "$EMBEDDING_BINARY" ]]; then
@@ -407,11 +497,12 @@ if [[ "$PROFILE" == metal-arm64 && "${SOVEREIGN_INCLUDE_MODELS:-1}" != 0 ]]; the
     else
       # Source-tree developer installs do not carry release binaries. Public
       # release archives vendor this exact file and are Sigstore-verified above.
-      curl -fsSL --retry 4 -o "$EMBEDDING_BINARY.part" \
-        "https://github.com/QuixiAI/embeddinggemma.c/releases/download/$EMBEDDINGGEMMA_VERSION/$EMBEDDINGGEMMA_METAL_ASSET"
+      curl -fsSL --retry 4 -o "$EMBEDDING_BINARY.part" "$EMBEDDINGGEMMA_METAL_URL"
     fi
     [[ "$(sha256 "$EMBEDDING_BINARY.part")" == "$EMBEDDINGGEMMA_METAL_SHA256" ]] || \
       die "embeddinggemma Metal binary checksum mismatch"
+    [[ "$(file_bytes "$EMBEDDING_BINARY.part")" == "$EMBEDDINGGEMMA_METAL_BYTES" ]] || \
+      die "embeddinggemma Metal binary size mismatch"
     mv "$EMBEDDING_BINARY.part" "$EMBEDDING_BINARY"
     chmod 755 "$EMBEDDING_BINARY"
   fi

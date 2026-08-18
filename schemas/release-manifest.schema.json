@@ -3,10 +3,10 @@
   "$id": "https://schemas.lazarus.ai/sovereign/release-manifest.schema.json",
   "title": "SovereignStack release manifest",
   "type": "object",
-  "required": ["schema_version", "version", "stack_commit", "runtime_commit", "supported_profiles", "images", "models"],
+  "required": ["schema_version", "version", "stack_commit", "runtime_version", "runtime_commit", "supported_profiles", "images", "models", "metal_agent", "embedding_runtime", "schemas"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.1" },
     "version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
     "stack_commit": { "$ref": "#/$defs/commit" },
     "runtime_version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
@@ -20,6 +20,9 @@
     },
     "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
     "models": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/model" } },
+    "metal_agent": { "$ref": "#/$defs/signedArtifact" },
+    "embedding_runtime": { "$ref": "#/$defs/versionedArtifact" },
+    "schemas": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifact" } },
     "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" } }
   },
   "$defs": {
@@ -46,6 +49,7 @@
         "repository": { "type": "string" },
         "revision": { "$ref": "#/$defs/commit" },
         "artifact": { "type": "string" },
+        "artifacts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifact" } },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "profiles": { "type": "array", "items": { "enum": ["cuda-x86_64", "metal-arm64"] } },
         "role": { "enum": ["generation", "embedding"] },
@@ -62,6 +66,43 @@
         "bytes": { "type": "integer", "minimum": 0 },
         "signature": { "type": "string" },
         "sbom": { "type": "string" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["name", "sha256", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "versionedArtifact": {
+      "type": "object",
+      "required": ["version", "artifact", "url", "sha256", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "artifact": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "signedArtifact": {
+      "type": "object",
+      "required": ["version", "repository", "artifact", "url", "signature_url", "sha256", "bytes", "signer_identity_regexp"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "repository": { "type": "string", "minLength": 1 },
+        "artifact": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "signature_url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "signer_identity_regexp": { "type": "string", "minLength": 1 }
       }
     }
   }

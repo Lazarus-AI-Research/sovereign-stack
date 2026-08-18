@@ -1,4 +1,32 @@
 #!/usr/bin/env bash
 # Prevent lifecycle tests from mutating the caller's real launchd domain.
 set -euo pipefail
-exit 0
+
+[[ -n "${SOVEREIGN_TEST_LAUNCHCTL_STATE:-}" ]] || exit 0
+mkdir -p "$SOVEREIGN_TEST_LAUNCHCTL_STATE"
+printf '%s\n' "$*" >> "$SOVEREIGN_TEST_LAUNCHCTL_STATE/calls"
+command="${1:-}"
+case "$command" in
+  print)
+    [[ -f "$SOVEREIGN_TEST_LAUNCHCTL_STATE/loaded" ]]
+    ;;
+  bootout)
+    rm -f "$SOVEREIGN_TEST_LAUNCHCTL_STATE/loaded"
+    ;;
+  bootstrap)
+    plist="${3:-}"
+    attempts_file="$SOVEREIGN_TEST_LAUNCHCTL_STATE/attempts"
+    attempts=0
+    [[ ! -f "$attempts_file" ]] || attempts="$(<"$attempts_file")"
+    attempts=$((attempts + 1))
+    printf '%s\n' "$attempts" > "$attempts_file"
+    if [[ "${SOVEREIGN_TEST_LAUNCHCTL_FAIL_NEW:-0}" == 1 ]] && grep -q NEW_SERVICE "$plist"; then
+      exit 5
+    fi
+    if (( attempts <= ${SOVEREIGN_TEST_LAUNCHCTL_FAIL_COUNT:-0} )); then
+      exit 5
+    fi
+    : > "$SOVEREIGN_TEST_LAUNCHCTL_STATE/loaded"
+    ;;
+  kickstart) ;;
+esac

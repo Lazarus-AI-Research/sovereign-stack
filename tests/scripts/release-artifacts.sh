@@ -18,15 +18,34 @@ python3 "$ROOT/release/generate_manifest.py" \
   --source "$ROOT/release/release-source.json" \
   --digest-dir "$TEST_ROOT/digests" \
   --stack-commit 0000000000000000000000000000000000000000 \
+  --schema-dir "$ROOT/schemas" \
   --output "$TEST_ROOT/generated/manifest.json" \
   --image-lock-output "$TEST_ROOT/generated/images.env"
 
-python3 - "$TEST_ROOT/generated/manifest.json" "$TEST_ROOT/generated/images.env" <<'PY'
+python3 - "$TEST_ROOT/generated/manifest.json" "$TEST_ROOT/generated/images.env" \
+  "$ROOT/schemas/release-manifest.schema.json" <<'PY'
 import json
 import sys
 
+from jsonschema import Draft202012Validator, FormatChecker
+
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+schema = json.load(open(sys.argv[3], encoding="utf-8"))
+Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 runtime_version = manifest["runtime_version"]
+assert manifest["schema_version"] == "1.1"
+metal = manifest["metal_agent"]
+assert metal["version"] == "0.1.0-rc.4"
+assert metal["version"] != manifest["version"]
+assert metal["artifact"] == "sovereign-metal-agent-0.1.0-rc.4-arm64.tar.gz"
+assert metal["url"].endswith("/v0.1.0-rc.4/" + metal["artifact"])
+assert metal["signature_url"] == metal["url"] + ".sigstore.json"
+assert metal["sha256"] == "ab8eabebac94f719325ce57f901962544ad068debc7b9f274334303b2fda393d"
+assert metal["bytes"] == 74820904
+assert manifest["embedding_runtime"]["version"] == "0.3.1"
+assert {schema["name"] for schema in manifest["schemas"]} >= {
+    "release-manifest.schema.json", "runtime-config.schema.json"
+}
 assets = {asset["name"]: asset for asset in manifest["assets"]}
 assert assets["embeddinggemma-darwin-arm64-metal"]["sha256"] == "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5"
 images = {image["name"]: image for image in manifest["images"] if image["first_party"]}
@@ -64,6 +83,7 @@ python3 "$ROOT/release/generate_manifest.py" \
   --source "$TEST_ROOT/legacy-source.json" \
   --digest-dir "$TEST_ROOT/digests" \
   --stack-commit 0000000000000000000000000000000000000000 \
+  --schema-dir "$ROOT/schemas" \
   --output "$TEST_ROOT/generated/legacy-manifest.json"
 python3 - "$TEST_ROOT/generated/legacy-manifest.json" <<'PY'
 import json
@@ -111,6 +131,15 @@ for profile in metal-arm64 cuda-x86_64; do
     grep -qx 'SOVEREIGN_EMBEDDINGS_IMAGE=' "$home/.env"
   fi
 done
+
+# Only the required OpenAI-compatible operations proxy to LiteLLM. A wildcard
+# here would also expose its management API and administration UI.
+grep -q '@scoped_openai path /api/openai/v1/models /api/openai/v1/chat/completions /api/openai/v1/embeddings' \
+  "$ROOT/deploy/config/caddy/Caddyfile"
+grep -A3 'handle @scoped_openai' "$ROOT/deploy/config/caddy/Caddyfile" | \
+  grep -q 'reverse_proxy sovereign-gateway:4000'
+! grep -Fq 'handle_path /api/openai/*' "$ROOT/deploy/config/caddy/Caddyfile"
+grep -A2 'handle /api/openai/\*' "$ROOT/deploy/config/caddy/Caddyfile" | grep -q 'respond "not found" 404'
 
 mv "$TEST_ROOT/release-root/release/images.env" "$TEST_ROOT/release-root/release/images.env.saved"
 if SOVEREIGN_HOME="$TEST_ROOT/missing-lock" \

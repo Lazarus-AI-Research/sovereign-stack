@@ -113,19 +113,31 @@ def runtime_manifest_valid(ctx: SuiteContext, params: dict) -> Result:
 @register("chat-completion")
 def chat_completion(ctx: SuiteContext, params: dict) -> Result:
     target = params.get("target", "gateway")
+    expected = params.get("expected", "sovereign")
+    max_tokens = int(params.get("max_tokens", 512))
     with ctx.client(target) as client:
         resp = client.post(
             "/v1/chat/completions",
             json={
                 "model": ctx.generation_alias(),
-                "messages": [{"role": "user", "content": "Reply with one short sentence."}],
-                "max_tokens": 32,
+                "messages": [{"role": "user", "content": f"Reply with exactly {expected} and nothing else."}],
+                "max_tokens": max_tokens,
             },
         )
     if resp.status_code != 200:
-        return False, f"[{target}] status {resp.status_code}: {resp.text[:200]}"
-    content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content")
-    return bool(content and content.strip()), f"[{target}] ok"
+        return False, f"[{target}] http={resp.status_code}: {resp.text[:200]}"
+    message = (resp.json().get("choices") or [{}])[0].get("message", {})
+    content = message.get("content")
+    reasoning = message.get("reasoning_content") or message.get("reasoning") or message.get("reasoning_details")
+    visible = bool(isinstance(content, str) and content.strip())
+    normalized = content.strip().strip("`'\".!, ").lower() if visible else ""
+    semantic = normalized == str(expected).strip().lower()
+    details = f"[{target}] http=200 visible={str(visible).lower()} reasoning={str(bool(reasoning)).lower()} semantic={str(semantic).lower()} max_tokens={max_tokens}"
+    if not visible:
+        return False, details + " (no visible answer was returned)"
+    if not semantic:
+        return False, details + f" content={content[:120]!r}"
+    return True, details
 
 
 @register("chat-streaming")
@@ -139,7 +151,7 @@ def chat_streaming(ctx: SuiteContext, params: dict) -> Result:
             json={
                 "model": ctx.generation_alias(),
                 "messages": [{"role": "user", "content": "Count to three."}],
-                "max_tokens": 32,
+                "max_tokens": int(params.get("max_tokens", 512)),
                 "stream": True,
             },
         ) as resp:

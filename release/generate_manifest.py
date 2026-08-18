@@ -9,6 +9,7 @@ revisions come from release-source.json, which is reviewed with the code.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -36,6 +37,39 @@ def read_digest(path: Path) -> str:
     return value
 
 
+def checked_component(source: dict, name: str, *, signed: bool = False) -> dict:
+    component = dict(source.get(name) or {})
+    required = {"version", "artifact", "url", "sha256", "bytes"}
+    if signed:
+        required.update({"signature_url", "signer_identity_regexp"})
+    missing = sorted(required - component.keys())
+    if missing:
+        raise ValueError(f"release source {name} is missing: {', '.join(missing)}")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(component["sha256"])):
+        raise ValueError(f"release source {name} has an invalid sha256")
+    if not isinstance(component["bytes"], int) or component["bytes"] <= 0:
+        raise ValueError(f"release source {name} has an invalid byte size")
+    if not str(component["url"]).endswith("/" + str(component["artifact"])):
+        raise ValueError(f"release source {name} URL does not name its artifact")
+    if signed and component["signature_url"] != component["url"] + ".sigstore.json":
+        raise ValueError(f"release source {name} signature URL does not match its artifact")
+    return component
+
+
+def schema_inventory(root: Path) -> list[dict]:
+    result = []
+    for path in sorted(root.glob("*.json")):
+        raw = path.read_bytes()
+        result.append({
+            "name": path.name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        })
+    if not result:
+        raise ValueError(f"no JSON schemas found under {root}")
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=Path("release/release-source.json"))
@@ -43,9 +77,12 @@ def main() -> None:
     parser.add_argument("--stack-commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--image-lock-output", type=Path)
+    parser.add_argument("--schema-dir", type=Path, default=Path("schemas"))
     args = parser.parse_args()
 
     source = json.loads(args.source.read_text(encoding="utf-8"))
+    if source.get("schema_version") != "1.1":
+        raise ValueError("release source must use schema_version 1.1")
     if not COMMIT.fullmatch(args.stack_commit):
         raise ValueError("--stack-commit must be a full 40-character commit")
     if not COMMIT.fullmatch(source["runtime_commit"]):
@@ -92,10 +129,12 @@ def main() -> None:
             }
         )
 
-    model_fields = {"id", "repository", "revision", "profiles", "role", "artifact", "sha256", "modalities"}
+    metal_agent = checked_component(source, "metal_agent", signed=True)
+    embedding_runtime = checked_component(source, "embedding_runtime")
+    model_fields = {"id", "repository", "revision", "profiles", "role", "artifact", "artifacts", "sha256", "modalities"}
     models = [{key: value for key, value in model.items() if key in model_fields} for model in source["models"]]
     manifest = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "version": version,
         "stack_commit": args.stack_commit,
         "runtime_version": runtime_version,
@@ -104,6 +143,9 @@ def main() -> None:
         "supported_profiles": source["supported_profiles"],
         "images": images,
         "models": models,
+        "metal_agent": metal_agent,
+        "embedding_runtime": embedding_runtime,
+        "schemas": schema_inventory(args.schema_dir),
         "assets": source.get("assets", []),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

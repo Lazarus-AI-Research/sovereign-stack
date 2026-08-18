@@ -14,6 +14,18 @@
 			reverse_proxy sovereign-control:8080
 		}
 
+		# Scoped OpenAI-compatible customer API. Only the operations needed by
+		# host applications are published; LiteLLM management and UI paths stay
+		# on the private Compose network. Stripping /api/openai preserves /v1/*.
+		@scoped_openai path /api/openai/v1/models /api/openai/v1/chat/completions /api/openai/v1/embeddings
+		handle @scoped_openai {
+			uri strip_prefix /api/openai
+			reverse_proxy sovereign-gateway:4000
+		}
+		handle /api/openai/* {
+			respond "not found" 404
+		}
+
 		# Branding is intentionally public so login and invite screens are themed.
 		handle /branding/* {
 			root * /srv

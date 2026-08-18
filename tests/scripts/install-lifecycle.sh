@@ -150,6 +150,7 @@ chmod 755 "$METAL_SERVICE_HOME/bin/embeddinggemma"
 SOVEREIGN_HOME="$METAL_SERVICE_HOME" \
 EMBEDDINGGEMMA_BINARY="$METAL_SERVICE_HOME/bin/embeddinggemma" \
 EMBEDDINGGEMMA_MODEL="$METAL_SERVICE_HOME/models/embeddinggemma.gguf" \
+SOVEREIGN_LAUNCHD_SKIP_HEALTH=1 \
   "$ROOT/deploy/scripts/install-embeddinggemma-metal.sh"
 METAL_LABEL="$(<"$METAL_SERVICE_HOME/state/embeddinggemma-launchd-label")"
 METAL_PLIST="$HOME/Library/LaunchAgents/$METAL_LABEL.plist"
@@ -169,6 +170,43 @@ PY
 fi
 SOVEREIGN_HOME="$METAL_SERVICE_HOME" "$ROOT/deploy/scripts/uninstall-embeddinggemma-metal.sh"
 [[ ! -e "$METAL_PLIST" ]]
+
+# Shared launchd replacement retries transient bootstrap error 5 and restores
+# the previous loaded service if a replacement cannot be registered.
+LAUNCHD_TEST="$TEST_HOME/launchd-helper"
+mkdir -p "$LAUNCHD_TEST/state" "$LAUNCHD_TEST/live"
+OLD_PLIST="$LAUNCHD_TEST/live/service.plist"
+NEW_PLIST="$LAUNCHD_TEST/new.plist"
+cat > "$OLD_PLIST" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>test.service</string><key>ProgramArguments</key><array><string>/usr/bin/true</string></array><key>OLD_SERVICE</key><true/></dict></plist>
+EOF
+cat > "$NEW_PLIST" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>test.service</string><key>ProgramArguments</key><array><string>/usr/bin/true</string></array><key>NEW_SERVICE</key><true/></dict></plist>
+EOF
+: > "$LAUNCHD_TEST/state/loaded"
+SOVEREIGN_TEST_LAUNCHCTL_STATE="$LAUNCHD_TEST/state" \
+SOVEREIGN_TEST_LAUNCHCTL_FAIL_COUNT=2 \
+  "$ROOT/deploy/scripts/launchd-service.sh" install test.service "$NEW_PLIST" "$OLD_PLIST"
+[[ "$(<"$LAUNCHD_TEST/state/attempts")" == 3 ]]
+grep -q NEW_SERVICE "$OLD_PLIST"
+
+rm -f "$LAUNCHD_TEST/state/attempts"
+: > "$LAUNCHD_TEST/state/loaded"
+cp "$OLD_PLIST" "$NEW_PLIST.success"
+sed 's/NEW_SERVICE/OLD_SERVICE/' "$NEW_PLIST.success" > "$OLD_PLIST"
+if SOVEREIGN_TEST_LAUNCHCTL_STATE="$LAUNCHD_TEST/state" \
+  SOVEREIGN_TEST_LAUNCHCTL_FAIL_NEW=1 \
+  SOVEREIGN_LAUNCHD_RETRIES=3 \
+    "$ROOT/deploy/scripts/launchd-service.sh" install test.service "$NEW_PLIST" "$OLD_PLIST"; then
+  echo "launchd helper accepted an unregistrable replacement" >&2
+  exit 1
+fi
+grep -q OLD_SERVICE "$OLD_PLIST"
+[[ -f "$LAUNCHD_TEST/state/loaded" ]]
 
 # The documented bootstrap is piped into Bash, where BASH_SOURCE[0] is unset.
 # Exercise that exact shell form early without touching a real installation.

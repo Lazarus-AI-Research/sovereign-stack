@@ -129,6 +129,47 @@ start_metal_embeddings() {
   launchctl kickstart -k "gui/$(id -u)/$label"
 }
 
+metal_generation_ready() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  [[ -s "$SOVEREIGN_HOME/agent.token" ]] || return 1
+  curl -fsS --max-time 5 -H "Authorization: Bearer $(<"$SOVEREIGN_HOME/agent.token")" \
+    http://127.0.0.1:9100/agent/manifest 2>/dev/null | \
+    grep -Eq '"generation"[^}]*"status"[[:space:]]*:[[:space:]]*"healthy"'
+}
+
+start_metal_generation() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  local label="com.lazarus.sovereign-runtime-agent"
+  local plist="$HOME/Library/LaunchAgents/$label.plist"
+  local deadline last_update
+  [[ -f "$plist" ]] || { echo "error: missing launchd service $plist" >&2; return 1; }
+  if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+  fi
+  launchctl kickstart -k "gui/$(id -u)/$label"
+  deadline=$((SECONDS + ${SOVEREIGN_AGENT_TIMEOUT:-600}))
+  last_update=$SECONDS
+  echo "waiting for Metal generation service..."
+  until metal_generation_ready; do
+    (( SECONDS < deadline )) || {
+      tail -n 80 "$SOVEREIGN_HOME/logs/agent.log" 2>/dev/null || true
+      echo "error: Metal generation service did not become healthy; data is safe, see $SOVEREIGN_HOME/logs/agent.log" >&2
+      return 1
+    }
+    if (( SECONDS - last_update >= 15 )); then
+      echo "Metal generation service is still loading ($((SECONDS + ${SOVEREIGN_AGENT_TIMEOUT:-600} - deadline))s elapsed)..."
+      last_update=$SECONDS
+    fi
+    sleep 2
+  done
+  echo "Metal generation service: ready"
+}
+
+stop_metal_generation() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  launchctl bootout "gui/$(id -u)/com.lazarus.sovereign-runtime-agent" 2>/dev/null || true
+}
+
 stop_metal_embeddings() {
   [[ "$PROFILE" == metal-arm64 ]] || return 0
   local label
@@ -175,15 +216,22 @@ open_portal() {
 
 wait_ready() {
   local deadline=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700}))
-  echo "models are loading in the background (the first start can take a while)..."
+  local last_update=$SECONDS runtime_state runtime_errors restarted=0 elapsed
+  echo "checking model services and runtime readiness..."
   if [[ "$PROFILE" == metal-arm64 ]]; then
     until curl -fsS http://127.0.0.1:42666/healthz >/dev/null 2>&1; do
       (( SECONDS < deadline )) || {
         echo "error: host embeddinggemma did not become ready before timeout" >&2
         return 1
       }
+      if (( SECONDS - last_update >= 15 )); then
+        elapsed=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700} - deadline))
+        echo "EmbeddingGemma: loading (${elapsed}s elapsed)"
+        last_update=$SECONDS
+      fi
       sleep 2
     done
+    echo "EmbeddingGemma: ready"
   else
     until [[ "$(docker inspect --format '{{.State.Health.Status}}' sovereign-embeddings 2>/dev/null || true)" == healthy ]]; do
       (( SECONDS < deadline )) || {
@@ -194,15 +242,39 @@ wait_ready() {
       sleep 2
     done
   fi
+  last_update=$SECONDS
   until docker exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
+    runtime_state="$(operator_curl "$BASE_URL/api/control/v1/runtime/manifest" 2>/dev/null | \
+      sed -n 's/.*"state":"\([^"]*\)".*/\1/p' || true)"
+    if [[ "$runtime_state" == configuration_error || "$runtime_state" == runtime_error ]]; then
+      runtime_errors="$(operator_curl "$BASE_URL/api/control/v1/runtime/errors" 2>/dev/null || true)"
+      if [[ "$PROFILE" == metal-arm64 && "$runtime_errors" == *HOST_AGENT_UNREACHABLE* && "$restarted" == 0 ]] && \
+        metal_generation_ready; then
+        echo "Runtime reported HOST_AGENT_UNREACHABLE after the host recovered; restarting the runtime once..."
+        compose restart sovereign-runtime
+        restarted=1
+        sleep 5
+        continue
+      fi
+      printf '%s\n' "$runtime_errors" >&2
+      compose logs --tail 120 sovereign-runtime >&2
+      echo "error: runtime entered terminal state ${runtime_state}; data is safe, inspect the error above and $SOVEREIGN_HOME/logs" >&2
+      return 1
+    fi
     (( SECONDS < deadline )) || {
       compose ps
       compose logs --tail 120 sovereign-runtime
       echo "error: runtime did not become ready before timeout" >&2
       return 1
     }
+    if (( SECONDS - last_update >= 15 )); then
+      elapsed=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700} - deadline))
+      echo "Runtime: ${runtime_state:-starting} (${elapsed}s elapsed)"
+      last_update=$SECONDS
+    fi
     sleep 5
   done
+  echo "Runtime: ready"
 }
 
 refresh_gateway_config() {
@@ -309,7 +381,7 @@ usage() {
 Usage: sovereign <command> [options]
 
   up                         Pull, start, wait, and run the smoke suite
-  start                      Start the control portal without waiting for models
+  start                      Start only the control portal
   open                       Open the portal (or first-admin setup) in a browser
   url                        Print the portal URL
   access desktop             Bind the portal to this computer only
@@ -345,14 +417,11 @@ case "${1:-help}" in
     compose up -d caddy
     wait_portal
     open_portal
-    # Start inference dependencies after the portal is reachable. These
-    # commands return without waiting for model readiness.
-    compose up -d sovereign-docker-proxy sovereign-runtime || true
-    if [[ "$PROFILE" != metal-arm64 ]]; then compose up -d sovereign-embeddings || true; fi
     echo "portal ready: $BASE_URL/"
     ;;
   up)
     ensure_project_owner
+    start_metal_generation
     start_metal_embeddings
     if [[ ! -f "$SOVEREIGN_HOME/state/offline" ]]; then compose pull; fi
     compose up -d --remove-orphans
@@ -387,6 +456,7 @@ case "${1:-help}" in
   down)
     compose down
     stop_metal_embeddings
+    stop_metal_generation
     ;;
   status)
     compose ps

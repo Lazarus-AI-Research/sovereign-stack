@@ -276,6 +276,21 @@ jobs:
             done
             (( verified == 1 )) || { echo "Unable to verify $ref@$digest after 3 attempts" >&2; exit 1; }
           done
+          METAL_ARTIFACT="$(jq -r .metal_agent.artifact release/release-source.json)"
+          METAL_URL="$(jq -r .metal_agent.url release/release-source.json)"
+          METAL_SIGNATURE_URL="$(jq -r .metal_agent.signature_url release/release-source.json)"
+          METAL_SHA256="$(jq -r .metal_agent.sha256 release/release-source.json)"
+          METAL_BYTES="$(jq -r .metal_agent.bytes release/release-source.json)"
+          METAL_SIGNER="$(jq -r .metal_agent.signer_identity_regexp release/release-source.json)"
+          curl -fsSL --retry 4 -o "$METAL_ARTIFACT" "$METAL_URL"
+          curl -fsSL --retry 4 -o "$METAL_ARTIFACT.sigstore.json" "$METAL_SIGNATURE_URL"
+          echo "$METAL_SHA256  $METAL_ARTIFACT" | sha256sum -c -
+          test "$(stat -c %s "$METAL_ARTIFACT")" = "$METAL_BYTES"
+          cosign verify-blob \
+            --bundle "$METAL_ARTIFACT.sigstore.json" \
+            --certificate-identity-regexp "$METAL_SIGNER" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$METAL_ARTIFACT"
       - name: Generate release manifest
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -290,12 +305,15 @@ jobs:
       - name: Vendor pinned EmbeddingGemma Metal executable
         run: |
           set -euo pipefail
+          EMBEDDING_ARTIFACT="$(jq -r .embedding_runtime.artifact release/release-source.json)"
+          EMBEDDING_URL="$(jq -r .embedding_runtime.url release/release-source.json)"
+          EMBEDDING_SHA256="$(jq -r .embedding_runtime.sha256 release/release-source.json)"
+          EMBEDDING_BYTES="$(jq -r .embedding_runtime.bytes release/release-source.json)"
           mkdir -p deploy/assets
-          curl -fsSL --retry 4 \
-            -o deploy/assets/embeddinggemma-darwin-arm64-metal \
-            https://github.com/QuixiAI/embeddinggemma.c/releases/download/v0.3.1/embeddinggemma-darwin-arm64-metal
-          echo 'c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5  deploy/assets/embeddinggemma-darwin-arm64-metal' | sha256sum -c -
-          chmod 755 deploy/assets/embeddinggemma-darwin-arm64-metal
+          curl -fsSL --retry 4 -o "deploy/assets/$EMBEDDING_ARTIFACT" "$EMBEDDING_URL"
+          echo "$EMBEDDING_SHA256  deploy/assets/$EMBEDDING_ARTIFACT" | sha256sum -c -
+          test "$(stat -c %s "deploy/assets/$EMBEDDING_ARTIFACT")" = "$EMBEDDING_BYTES"
+          chmod 755 "deploy/assets/$EMBEDDING_ARTIFACT"
       - name: Build host lifecycle binaries
         run: |
           set -euo pipefail
