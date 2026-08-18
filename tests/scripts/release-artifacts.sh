@@ -33,7 +33,7 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 schema = json.load(open(sys.argv[3], encoding="utf-8"))
 Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 runtime_version = manifest["runtime_version"]
-assert manifest["schema_version"] == "1.2"
+assert manifest["schema_version"] == "1.3"
 metal = manifest["metal_agent"]
 assert metal["version"] == "0.1.0-rc.4"
 assert metal["version"] != manifest["version"]
@@ -44,10 +44,16 @@ assert metal["sha256"] == "ab8eabebac94f719325ce57f901962544ad068debc7b9f2743343
 assert metal["bytes"] == 74820904
 assert manifest["embedding_runtime"]["version"] == "0.3.1"
 dependencies = manifest["installer_dependencies"]["metal-arm64"]
-assert set(dependencies) == {"colima", "lima", "docker_cli", "docker_compose"}
+assert set(dependencies) == {
+    "cosign", "colima", "colima_disk_image", "lima", "docker_cli", "docker_compose"
+}
 assert dependencies["colima"]["version"] == "0.10.3"
+assert dependencies["colima_disk_image"]["sha256"] == "1fc0354f4f99734ce3886628cc7af8b0437c1a1d391b126bd09cba0df35ee53f"
+assert dependencies["colima_disk_image"]["bytes"] == 332354401
+assert dependencies["cosign"]["bytes"] == 139051394
 assert dependencies["docker_cli"]["version"] == "29.7.2"
 assert dependencies["docker_compose"]["signature_url"].endswith(".sigstore.json")
+assert manifest["engine_probe"]["image"].endswith("@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d")
 for dependency in dependencies.values():
     assert len(dependency["sha256"]) == 64
     assert dependency["bytes"] > 0

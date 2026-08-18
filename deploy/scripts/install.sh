@@ -78,7 +78,8 @@ component_number() {
     inside && index($0, "\"" key "\"") {
       value=$0
       sub("^.*\"" key "\"[[:space:]]*:[[:space:]]*", "", value)
-      sub("[[:space:]]*,?[[:space:]]*$", "", value)
+      sub("[[:space:]]*,.*$", "", value)
+      sub("[[:space:]]*$", "", value)
       print value
       exit
     }
@@ -185,6 +186,8 @@ install_cosign() {
   curl -fsSL --retry 4 -o "$TMP_ROOT/cosign" "https://github.com/sigstore/cosign/releases/download/v3.1.1/$name"
   [[ "$(sha256 "$TMP_ROOT/cosign")" == "$checksum" ]] || die "cosign checksum mismatch"
   chmod 700 "$TMP_ROOT/cosign"
+  SOVEREIGN_COSIGN="$TMP_ROOT/cosign"
+  export SOVEREIGN_COSIGN
 }
 
 if [[ -n "$OFFLINE_BUNDLE" ]]; then
@@ -278,14 +281,39 @@ ENGINE_LIB="$SOURCE_DIR/deploy/scripts/container-engine.sh"
 source "$ENGINE_LIB"
 say "Preparing the container engine"
 SOVEREIGN_ENGINE_MANIFEST="$COMPONENT_MANIFEST"
+SOVEREIGN_ENGINE_OFFLINE="$OFFLINE_MODE"
+if (( OFFLINE_MODE == 1 )) && [[ "$PROFILE" == metal-arm64 ]]; then
+  SOVEREIGN_ENGINE_ARTIFACT_DIR="$UNPACK/installer-dependencies"
+  COSIGN_ARTIFACT="$(component_value "$COMPONENT_MANIFEST" cosign artifact)"
+  [[ -n "$COSIGN_ARTIFACT" && -f "$SOVEREIGN_ENGINE_ARTIFACT_DIR/$COSIGN_ARTIFACT" ]] || \
+    die "offline bundle is missing its pinned signature-verification tool"
+  chmod 700 "$SOVEREIGN_ENGINE_ARTIFACT_DIR/$COSIGN_ARTIFACT"
+  SOVEREIGN_COSIGN="$SOVEREIGN_ENGINE_ARTIFACT_DIR/$COSIGN_ARTIFACT"
+fi
+export SOVEREIGN_ENGINE_MANIFEST SOVEREIGN_ENGINE_OFFLINE
+export SOVEREIGN_ENGINE_ARTIFACT_DIR SOVEREIGN_COSIGN
 sovereign_engine_require || die \
   "container-engine setup could not complete; existing appliance data is safe"
+if [[ -n "${OFFLINE_IMAGES:-}" && -f "$OFFLINE_IMAGES" ]]; then
+  sovereign_engine_docker load -i "$OFFLINE_IMAGES" >/dev/null
+fi
+if ! sovereign_engine_probe_compatibility "$COMPONENT_MANIFEST" "$PROFILE"; then
+  if [[ "$PROFILE" == metal-arm64 && "$SOVEREIGN_ENGINE_PROVIDER" == existing ]]; then
+    say "The existing engine is incompatible; preparing an isolated managed engine"
+    sovereign_engine_provision_managed_colima "$COMPONENT_MANIFEST" || die \
+      "managed container-engine fallback could not be prepared; existing engines and appliance data are unchanged"
+    if [[ -n "${OFFLINE_IMAGES:-}" && -f "$OFFLINE_IMAGES" ]]; then
+      sovereign_engine_docker load -i "$OFFLINE_IMAGES" >/dev/null
+    fi
+    sovereign_engine_probe_compatibility "$COMPONENT_MANIFEST" "$PROFILE" || die \
+      "managed container-engine compatibility checks failed; probe resources were removed and appliance data is safe"
+  else
+    die "container-engine compatibility checks failed; probe resources were removed and appliance data is safe"
+  fi
+fi
 if [[ "$PROFILE" == cuda-x86_64 ]]; then
   sovereign_engine_docker info --format '{{json .Runtimes}}' | grep -qi nvidia || \
     die "NVIDIA Container Toolkit is not configured for the selected engine"
-fi
-if [[ -n "${OFFLINE_IMAGES:-}" && -f "$OFFLINE_IMAGES" ]]; then
-  sovereign_engine_docker load -i "$OFFLINE_IMAGES" >/dev/null
 fi
 
 say "Installing release assets"

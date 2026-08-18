@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Remain alive long enough for the fake container to exercise the host path.
+sleep 30

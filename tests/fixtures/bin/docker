@@ -18,7 +18,24 @@ case "${1:-}" in
     exit 0
     ;;
   info)
-    [[ " $* " == *" --format "* ]] && printf '{"nvidia":{}}\n'
+    case "$*" in
+      *'{{.Architecture}}'*)
+        if [[ -n "${DOCKER_CONFIG:-}" ]]; then
+          printf 'arm64\n'
+        elif [[ -n "${SOVEREIGN_TEST_DOCKER_ARCH:-}" ]]; then
+          printf '%s\n' "$SOVEREIGN_TEST_DOCKER_ARCH"
+        elif [[ "${SOVEREIGN_TEST_UNAME_M:-arm64}" == x86_64 ]]; then
+          printf 'amd64\n'
+        else
+          printf 'arm64\n'
+        fi
+        ;;
+      *'{{json .Runtimes}}'*) printf '{"nvidia":{}}\n' ;;
+    esac
+    exit 0
+    ;;
+  version)
+    [[ " $* " == *" --format "* ]] && printf '1.52\n'
     exit 0
     ;;
   pull|load) exit 0 ;;
@@ -35,8 +52,32 @@ case "${1:-}" in
     fi
     exit 0
     ;;
+  volume) exit 0 ;;
+  run)
+    if [[ "$*" == *'df -Pk /'* ]]; then
+      printf '99999999\n'
+      exit 0
+    fi
+    previous=""
+    for argument in "$@"; do
+      if [[ "$previous" == --mount && "$argument" == type=bind,source=*,target=* ]]; then
+        source_path="${argument#type=bind,source=}"
+        source_path="${source_path%,target=*}"
+        printf 'container-ok\n' > "$source_path/container-written"
+      fi
+      previous="$argument"
+    done
+    if [[ " $* " == *" -d "* ]]; then printf 'fixture-probe-container\n'; fi
+    exit 0
+    ;;
+  port)
+    printf '127.0.0.1:54321\n'
+    exit 0
+    ;;
+  rm) exit 0 ;;
   compose)
     case " ${*:-} " in
+      *" version --short "*) printf '5.5.0\n'; exit 0 ;;
       *" version "*|*" config "*|*" down "*) exit 0 ;;
     esac
     ;;

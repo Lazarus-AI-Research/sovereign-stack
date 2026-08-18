@@ -2,11 +2,19 @@
 
 SovereignStack v0.1 supports two certified host profiles:
 
-- Apple Silicon Mac with at least 32 GB unified memory, Docker Desktop, and 20 GB free disk (60 GB or more is recommended when keeping model weights).
+- Apple Silicon Mac with at least 32 GB unified memory and 20 GB free disk
+  (60 GB or more is recommended when keeping model weights). Docker Desktop,
+  Homebrew, Colima, Lima, Docker CLI, and Compose are not prerequisites: when
+  no compatible engine is available, the installer provisions its own pinned
+  Colima toolchain and private VM.
 - Ubuntu 24.04 x86_64 with one NVIDIA GPU exposing at least 24 GB VRAM, Docker Engine with Compose v2, the NVIDIA driver, and NVIDIA Container Toolkit.
 
-The installer manages SovereignStack only. It does not modify host drivers,
-Docker, or operating-system packages.
+On macOS the installer owns only its private `sovereign` Colima profile and
+never changes the user's active Docker context. Existing compatible engines
+are reused without being stopped, upgraded, reconfigured, or removed. The
+Ubuntu dependency-provisioning path is still under implementation, so the
+listed Linux container and NVIDIA prerequisites remain required in this
+release candidate.
 
 ## One-command install
 
@@ -67,6 +75,7 @@ sovereign status
 sovereign open
 sovereign logs -f sovereign-runtime
 sovereign smoke
+sovereign repair
 sovereign down
 sovereign up
 ```
@@ -84,8 +93,11 @@ implicit database-volume takeover.
 
 ## Removal
 
-`sovereign uninstall` stops services and removes release code while preserving
-data and Docker volumes. Permanent deletion deliberately requires both flags:
+`sovereign uninstall` stops services and an installer-owned Colima VM, then
+removes release code while preserving appliance data, Docker volumes, and the
+managed VM. `sovereign uninstall --purge` prints every owned path, volume, and
+managed VM without deleting anything. After reviewing that preview, permanent
+deletion deliberately requires both flags:
 
 ```bash
 sovereign uninstall --purge --yes

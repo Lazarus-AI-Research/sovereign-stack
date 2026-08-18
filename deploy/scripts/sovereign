@@ -11,6 +11,12 @@ ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
 [[ -r "$ENGINE_LIB" ]] || { echo "error: container-engine support is missing from the installed release" >&2; exit 1; }
 # shellcheck source=container-engine.sh
 source "$ENGINE_LIB"
+COMPONENT_MANIFEST="$CURRENT/release/manifest.json"
+[[ -f "$COMPONENT_MANIFEST" ]] || COMPONENT_MANIFEST="$CURRENT/release/release-source.json"
+SOVEREIGN_ENGINE_MANIFEST="$COMPONENT_MANIFEST"
+SOVEREIGN_ENGINE_OFFLINE=0
+[[ -f "$SOVEREIGN_HOME/state/offline" ]] && SOVEREIGN_ENGINE_OFFLINE=1
+export SOVEREIGN_ENGINE_MANIFEST SOVEREIGN_ENGINE_OFFLINE
 
 PROFILE="${SOVEREIGN_PROFILE:-$(<"$SOVEREIGN_HOME/state/profile")}"
 case "$PROFILE" in
@@ -409,6 +415,7 @@ Usage: sovereign <command> [options]
   bundle create [options]    Create a same-platform offline bundle
   bundle install <archive>   Install a same-platform offline bundle
   validate                   Validate the resolved Compose configuration
+  repair                     Repair and fully probe the container engine
   update <version>           Back up and install a signed release; roll back on failure
   uninstall [--purge]        Remove the appliance; preserve data by default
   version                    Print the installed version
@@ -467,6 +474,7 @@ case "${1:-help}" in
     compose down
     stop_metal_embeddings
     stop_metal_generation
+    sovereign_engine_stop_managed
     ;;
   status)
     compose ps
@@ -510,6 +518,10 @@ case "${1:-help}" in
     esac
     ;;
   validate) compose config -q && echo "Compose configuration valid ($PROFILE)" ;;
+  repair)
+    sovereign_engine_repair "$COMPONENT_MANIFEST" "$PROFILE"
+    echo "container engine repaired and compatibility checks passed"
+    ;;
   update)
     target_version="${2:-}"
     target_version="${target_version#v}"

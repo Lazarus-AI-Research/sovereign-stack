@@ -3,10 +3,10 @@
   "$id": "https://schemas.lazarus.ai/sovereign/release-manifest.schema.json",
   "title": "SovereignStack release manifest",
   "type": "object",
-  "required": ["schema_version", "version", "stack_commit", "runtime_version", "runtime_commit", "supported_profiles", "images", "models", "metal_agent", "embedding_runtime", "installer_dependencies", "schemas"],
+  "required": ["schema_version", "version", "stack_commit", "runtime_version", "runtime_commit", "supported_profiles", "images", "models", "metal_agent", "embedding_runtime", "engine_probe", "installer_dependencies", "schemas"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": "1.2" },
+    "schema_version": { "const": "1.3" },
     "version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
     "stack_commit": { "$ref": "#/$defs/commit" },
     "runtime_version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
@@ -22,6 +22,7 @@
     "models": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/model" } },
     "metal_agent": { "$ref": "#/$defs/signedArtifact" },
     "embedding_runtime": { "$ref": "#/$defs/versionedArtifact" },
+    "engine_probe": { "$ref": "#/$defs/engineProbe" },
     "installer_dependencies": {
       "type": "object",
       "required": ["metal-arm64"],
@@ -29,10 +30,12 @@
       "properties": {
         "metal-arm64": {
           "type": "object",
-          "required": ["colima", "lima", "docker_cli", "docker_compose"],
+          "required": ["cosign", "colima", "colima_disk_image", "lima", "docker_cli", "docker_compose"],
           "additionalProperties": false,
           "properties": {
+            "cosign": { "$ref": "#/$defs/installerDependency" },
             "colima": { "$ref": "#/$defs/installerDependency" },
+            "colima_disk_image": { "$ref": "#/$defs/installerDependency" },
             "lima": { "$ref": "#/$defs/installerDependency" },
             "docker_cli": { "$ref": "#/$defs/installerDependency" },
             "docker_compose": { "$ref": "#/$defs/installerDependency" }
@@ -96,6 +99,17 @@
         "bytes": { "type": "integer", "minimum": 1 }
       }
     },
+    "engineProbe": {
+      "type": "object",
+      "required": ["image", "container_port", "minimum_api_version", "minimum_free_kib"],
+      "additionalProperties": false,
+      "properties": {
+        "image": { "type": "string", "pattern": "^[A-Za-z0-9._/:@-]+@sha256:[a-f0-9]{64}$" },
+        "container_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "minimum_api_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+        "minimum_free_kib": { "type": "integer", "minimum": 1048576 }
+      }
+    },
     "versionedArtifact": {
       "type": "object",
       "required": ["version", "artifact", "url", "sha256", "bytes"],
@@ -120,7 +134,7 @@
         "signer_identity_regexp": { "type": "string", "minLength": 1 },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "bytes": { "type": "integer", "minimum": 1 },
-        "format": { "enum": ["executable", "tar.gz"] }
+        "format": { "enum": ["executable", "tar.gz", "raw.gz"] }
       },
       "dependentRequired": {
         "signature_url": ["signer_identity_regexp"],

@@ -251,3 +251,19 @@ embedding evidence, persistence evidence, cleanup evidence, and redacted logs.
 The open installer-hardening PR remains a prerequisite, not the completion of
 this plan. It must not be presented as a finished one-click installer until
 these gates pass.
+
+## Implementation status (2026-08-18)
+
+Delivery items 1 and 2 are implemented. The macOS portion of item 3 now runs
+digest-pinned API, architecture, Compose, engine-capacity, named-volume,
+bind-mount, loopback-port, and container-to-host probes. Managed Colima can be
+started, stopped, repaired from verified cached artifacts, and deleted only
+through the previewed `--purge --yes` boundary. Same-platform offline bundles
+carry the pinned installer dependencies, Cosign, and Docker Compose Sigstore
+bundle, including the Colima guest disk image; a hermetic fresh install proves
+that this path makes no network call.
+
+Item 3 still needs disposable-VM repetition and damaged-VM validation beyond
+the hermetic recovery tests. Items 4 through 8 remain open, including Ubuntu
+driver/container provisioning, the shared bootstrap state machine, visible
+package progress, and the clean-machine release matrix.

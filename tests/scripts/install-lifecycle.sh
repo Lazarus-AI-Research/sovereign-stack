@@ -237,22 +237,173 @@ SOVEREIGN_SKIP_START=1 \
 grep -qx "SOVEREIGN_VERSION=$VERSION" "$CUDA_HOME/.env"
 
 # Exercise bundle creation and a fresh offline install without downloading
-# weights. The Docker fixture emits a small stand-in image archive.
+# weights. The bundle must carry the complete installer toolchain so the fresh
+# target can begin without Docker, Colima, Compose, Cosign, or network access.
 mkdir -p "$TEST_HOME/runtime-dist/$VERSION/agent-dist"
 cp "$ROOT/deploy/scripts/uninstall.sh" "$TEST_HOME/runtime-dist/$VERSION/agent-dist/install-agent.sh"
 chmod +x "$TEST_HOME/runtime-dist/$VERSION/agent-dist/install-agent.sh"
+BUNDLE_DEPS="$TEST_HOME/bundle-dependencies"
+mkdir -p "$BUNDLE_DEPS/lima/bin" "$BUNDLE_DEPS/docker/docker"
+cat > "$BUNDLE_DEPS/cosign-test" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cat > "$BUNDLE_DEPS/colima-test" <<'SH'
+#!/usr/bin/env bash
+printf 'colima %s\n' "$*" >> "${LIFECYCLE_ENGINE_LOG:?}"
+exit 0
+SH
+printf 'test colima disk image\n' > "$BUNDLE_DEPS/colima-disk.raw.gz"
+cat > "$BUNDLE_DEPS/lima/bin/limactl" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cp "$ROOT/tests/fixtures/bin/docker" "$BUNDLE_DEPS/docker/docker/docker"
+cat > "$BUNDLE_DEPS/docker-compose-test" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod 755 "$BUNDLE_DEPS/cosign-test" "$BUNDLE_DEPS/colima-test" \
+  "$BUNDLE_DEPS/lima/bin/limactl" "$BUNDLE_DEPS/docker/docker/docker" \
+  "$BUNDLE_DEPS/docker-compose-test"
+tar -czf "$BUNDLE_DEPS/lima-test.tar.gz" -C "$BUNDLE_DEPS/lima" .
+tar -czf "$BUNDLE_DEPS/docker-test.tgz" -C "$BUNDLE_DEPS/docker" .
+printf '{}\n' > "$BUNDLE_DEPS/docker-compose-test.sigstore.json"
+test_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+test_bytes() {
+  if stat -f %z "$1" >/dev/null 2>&1; then stat -f %z "$1"
+  else stat -c %s "$1"; fi
+}
+cat > "$TEST_HOME/current/release/release-source.json" <<EOF
+{
+  "metal_agent": {
+    "version": "test", "artifact": "metal-agent-test.tar.gz",
+    "url": "https://example.test/metal-agent-test.tar.gz",
+    "signature_url": "https://example.test/metal-agent-test.tar.gz.sigstore.json",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bytes": 1, "signer_identity_regexp": "^test$"
+  },
+  "embedding_runtime": {
+    "version": "test", "artifact": "embedding-test",
+    "url": "https://example.test/embedding-test",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bytes": 1
+  },
+  "engine_probe": {
+    "image": "example.test/probe@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "container_port": 80, "minimum_api_version": "1.41", "minimum_free_kib": 20971520
+  },
+  "installer_dependencies": {"metal-arm64": {
+    "cosign": {
+      "version": "test", "artifact": "cosign-test", "url": "file://$BUNDLE_DEPS/cosign-test",
+      "sha256": "$(test_hash "$BUNDLE_DEPS/cosign-test")", "bytes": $(test_bytes "$BUNDLE_DEPS/cosign-test"), "format": "executable"
+    },
+    "colima": {
+      "version": "test", "artifact": "colima-test", "url": "file://$BUNDLE_DEPS/colima-test",
+      "sha256": "$(test_hash "$BUNDLE_DEPS/colima-test")", "bytes": $(test_bytes "$BUNDLE_DEPS/colima-test"), "format": "executable"
+    },
+    "colima_disk_image": {
+      "version": "test", "artifact": "colima-disk.raw.gz", "url": "file://$BUNDLE_DEPS/colima-disk.raw.gz",
+      "sha256": "$(test_hash "$BUNDLE_DEPS/colima-disk.raw.gz")", "bytes": $(test_bytes "$BUNDLE_DEPS/colima-disk.raw.gz"), "format": "raw.gz"
+    },
+    "lima": {
+      "version": "test", "artifact": "lima-test.tar.gz", "url": "file://$BUNDLE_DEPS/lima-test.tar.gz",
+      "sha256": "$(test_hash "$BUNDLE_DEPS/lima-test.tar.gz")", "bytes": $(test_bytes "$BUNDLE_DEPS/lima-test.tar.gz"), "format": "tar.gz"
+    },
+    "docker_cli": {
+      "version": "test", "artifact": "docker-test.tgz", "url": "file://$BUNDLE_DEPS/docker-test.tgz",
+      "sha256": "$(test_hash "$BUNDLE_DEPS/docker-test.tgz")", "bytes": $(test_bytes "$BUNDLE_DEPS/docker-test.tgz"), "format": "tar.gz"
+    },
+    "docker_compose": {
+      "version": "test", "artifact": "docker-compose-test", "url": "file://$BUNDLE_DEPS/docker-compose-test",
+      "signature_url": "https://example.test/docker-compose-test.sigstore.json",
+      "signer_identity_regexp": "^test$",
+      "sha256": "$(test_hash "$BUNDLE_DEPS/docker-compose-test")", "bytes": $(test_bytes "$BUNDLE_DEPS/docker-compose-test"), "format": "executable"
+    }
+  }}
+}
+EOF
 BUNDLE="$TEST_HOME/bundles/lifecycle.tar.gz"
+SOVEREIGN_ENGINE_ARTIFACT_DIR="$BUNDLE_DEPS" \
 SOVEREIGN_HOME="$TEST_HOME" "$TEST_HOME/current/deploy/scripts/create-offline-bundle.sh" --no-pull --output "$BUNDLE"
 [[ -s "$BUNDLE" && -s "$BUNDLE.json" ]]
+tar -tzf "$BUNDLE" | grep -q 'installer-dependencies/cosign-test$'
+tar -tzf "$BUNDLE" | grep -q 'installer-dependencies/colima-disk.raw.gz$'
+tar -tzf "$BUNDLE" | grep -q 'installer-dependencies/docker-compose-test.sigstore.json$'
 
 OFFLINE_HOME="$TEST_HOME/offline-install"
+OFFLINE_BLOCKERS="$TEST_HOME/offline-blockers"
+NETWORK_LOG="$TEST_HOME/offline-network.log"
+LIFECYCLE_ENGINE_LOG="$TEST_HOME/offline-engine.log"
+mkdir -p "$OFFLINE_BLOCKERS"
+cat > "$OFFLINE_BLOCKERS/curl" <<'SH'
+#!/usr/bin/env bash
+for argument in "$@"; do
+  case "$argument" in
+    http://127.0.0.1:*) exit 0 ;;
+    http://localhost:*) exit 0 ;;
+    https://*|http://*) printf '%s\n' "$argument" >> "${NETWORK_LOG:?}"; exit 97 ;;
+  esac
+done
+exit 0
+SH
+chmod 755 "$OFFLINE_BLOCKERS/curl"
+: > "$NETWORK_LOG"
+: > "$LIFECYCLE_ENGINE_LOG"
+
+# An ambient engine that answers basic Docker calls but fails a full
+# compatibility probe is left untouched and replaced with the isolated
+# managed provider, including while offline.
+FALLBACK_HOME="$TEST_HOME/incompatible-engine-install"
+SOVEREIGN_HOME="$FALLBACK_HOME" \
+SOVEREIGN_BIN_DIR="$FALLBACK_HOME/bin" \
+SOVEREIGN_INCLUDE_MODELS=0 \
+SOVEREIGN_SKIP_START=1 \
+SOVEREIGN_TEST_DOCKER_ARCH=amd64 \
+SOVEREIGN_ENGINE_PLATFORM=Darwin-arm64 \
+SOVEREIGN_COLIMA_HOME="$TEST_HOME/fallback-colima" \
+NETWORK_LOG="$NETWORK_LOG" \
+LIFECYCLE_ENGINE_LOG="$LIFECYCLE_ENGINE_LOG" \
+PATH="$OFFLINE_BLOCKERS:$PATH" \
+  "$ROOT/deploy/scripts/install.sh" --version "$VERSION" --profile metal-arm64 --offline-bundle "$BUNDLE"
+grep -q '^provider=managed-colima$' "$FALLBACK_HOME/state/container-engine.env"
+[[ ! -s "$NETWORK_LOG" ]]
+SOVEREIGN_HOME="$FALLBACK_HOME" LIFECYCLE_ENGINE_LOG="$LIFECYCLE_ENGINE_LOG" \
+  "$FALLBACK_HOME/current/deploy/scripts/uninstall.sh" --purge --yes >/dev/null
+[[ ! -e "$FALLBACK_HOME" ]]
+
 SOVEREIGN_HOME="$OFFLINE_HOME" \
 SOVEREIGN_BIN_DIR="$OFFLINE_HOME/bin" \
 SOVEREIGN_INCLUDE_MODELS=0 \
 SOVEREIGN_SKIP_START=1 \
+SOVEREIGN_ENGINE_PREFER_MANAGED=1 \
+SOVEREIGN_ENGINE_PLATFORM=Darwin-arm64 \
+SOVEREIGN_COLIMA_HOME="$TEST_HOME/offline-colima" \
+NETWORK_LOG="$NETWORK_LOG" \
+LIFECYCLE_ENGINE_LOG="$LIFECYCLE_ENGINE_LOG" \
+PATH="$OFFLINE_BLOCKERS:$PATH" \
   "$ROOT/deploy/scripts/install.sh" --version "$VERSION" --profile metal-arm64 --offline-bundle "$BUNDLE"
 [[ -f "$OFFLINE_HOME/state/offline" ]]
 [[ -x "$OFFLINE_HOME/runtime-dist/$VERSION/agent-dist/install-agent.sh" ]]
+grep -q '^provider=managed-colima$' "$OFFLINE_HOME/state/container-engine.env"
+[[ ! -s "$NETWORK_LOG" ]]
+
+# Purge first renders the exact owned VM and data scope, then requires a
+# separate confirmation. The confirmed path deletes only that managed profile.
+if SOVEREIGN_HOME="$OFFLINE_HOME" LIFECYCLE_ENGINE_LOG="$LIFECYCLE_ENGINE_LOG" \
+  "$OFFLINE_HOME/current/deploy/scripts/uninstall.sh" --purge > "$TEST_HOME/purge-preview.log" 2>&1; then
+  echo "uninstall accepted purge without explicit confirmation" >&2
+  exit 1
+fi
+grep -q 'managed Colima VM: sovereign' "$TEST_HOME/purge-preview.log"
+[[ -d "$OFFLINE_HOME" ]]
+SOVEREIGN_HOME="$OFFLINE_HOME" LIFECYCLE_ENGINE_LOG="$LIFECYCLE_ENGINE_LOG" \
+  "$OFFLINE_HOME/current/deploy/scripts/uninstall.sh" --purge --yes
+[[ ! -e "$OFFLINE_HOME" ]]
+grep -q 'colima delete sovereign --force' "$LIFECYCLE_ENGINE_LOG"
 
 mkdir -p "$HOME/Library/LaunchAgents"
 touch "$HOME/Library/LaunchAgents/com.lazarus.sovereign-runtime-agent.plist"
