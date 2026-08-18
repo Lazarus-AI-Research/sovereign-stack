@@ -7,6 +7,10 @@ CURRENT="$SOVEREIGN_HOME/current"
 ENV_FILE="$SOVEREIGN_HOME/.env"
 [[ -d "$CURRENT/deploy" ]] || { echo "error: SovereignStack is not installed at $SOVEREIGN_HOME" >&2; exit 1; }
 [[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE is missing" >&2; exit 1; }
+ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
+[[ -r "$ENGINE_LIB" ]] || { echo "error: container-engine support is missing from the installed release" >&2; exit 1; }
+# shellcheck source=container-engine.sh
+source "$ENGINE_LIB"
 
 PROFILE="${SOVEREIGN_PROFILE:-$(<"$SOVEREIGN_HOME/state/profile")}"
 case "$PROFILE" in
@@ -16,9 +20,15 @@ case "$PROFILE" in
 esac
 
 compose() {
-  docker compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE" \
+  sovereign_engine_require
+  sovereign_engine_compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE" \
     -f "$CURRENT/deploy/compose/compose.yml" \
     -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml" "$@"
+}
+
+docker_command() {
+  sovereign_engine_require
+  sovereign_engine_docker "$@"
 }
 
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed 's/^"//;s/"$//'; }
@@ -95,8 +105,8 @@ ensure_project_owner() {
   local container owner expected
   expected="$(cd "$SOVEREIGN_HOME" && pwd -P)"
   for container in sovereign-postgres sovereign-runtime sovereign-embeddings sovereign-caddy; do
-    docker inspect "$container" >/dev/null 2>&1 || continue
-    owner="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container" 2>/dev/null || true)"
+    docker_command inspect "$container" >/dev/null 2>&1 || continue
+    owner="$(docker_command inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container" 2>/dev/null || true)"
     if [[ "$owner" != "$expected" && "${SOVEREIGN_ALLOW_PROJECT_TAKEOVER:-0}" != 1 ]]; then
       echo "error: $container belongs to another SovereignStack installation (${owner:-unknown})" >&2
       echo "stop that installation first; set SOVEREIGN_ALLOW_PROJECT_TAKEOVER=1 only for an intentional migration" >&2
@@ -233,7 +243,7 @@ wait_ready() {
     done
     echo "EmbeddingGemma: ready"
   else
-    until [[ "$(docker inspect --format '{{.State.Health.Status}}' sovereign-embeddings 2>/dev/null || true)" == healthy ]]; do
+    until [[ "$(docker_command inspect --format '{{.State.Health.Status}}' sovereign-embeddings 2>/dev/null || true)" == healthy ]]; do
       (( SECONDS < deadline )) || {
         compose logs --tail 120 sovereign-embeddings
         echo "error: embeddinggemma did not become ready before timeout" >&2
@@ -243,7 +253,7 @@ wait_ready() {
     done
   fi
   last_update=$SECONDS
-  until docker exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
+  until docker_command exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
     runtime_state="$(operator_curl "$BASE_URL/api/control/v1/runtime/manifest" 2>/dev/null | \
       sed -n 's/.*"state":"\([^"]*\)".*/\1/p' || true)"
     if [[ "$runtime_state" == configuration_error || "$runtime_state" == runtime_error ]]; then

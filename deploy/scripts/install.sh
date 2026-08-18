@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Noninteractive SovereignStack v0.1 installer. It installs product assets and
-# starts the appliance; host drivers and container tooling remain prerequisites.
+# SovereignStack installer. It provisions required runtime dependencies,
+# installs product assets, and starts the appliance.
 set -Eeuo pipefail
 
 DEFAULT_VERSION="0.1.0-rc.6"
@@ -90,9 +90,7 @@ file_bytes() {
   else stat -c %s "$1"; fi
 }
 
-for command in curl tar openssl docker; do need "$command"; done
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
-docker info >/dev/null 2>&1 || die "Docker is not running"
+for command in curl tar openssl; do need "$command"; done
 
 SCRIPT_DIR=""
 LOCAL_REPO=""
@@ -166,7 +164,6 @@ else
   else
     HOST_MEMORY_BYTES=0
   fi
-  docker info --format '{{json .Runtimes}}' | grep -qi nvidia || die "NVIDIA Container Toolkit is not configured for Docker"
 fi
 
 AVAILABLE_KB="$(df -Pk "$HOME" | awk 'NR==2 {print $4}')"
@@ -202,7 +199,7 @@ if [[ -n "$OFFLINE_BUNDLE" ]]; then
     die "offline bundle metadata is incomplete"
   [[ "$(<"$UNPACK/profile")" == "$PROFILE" ]] || die "offline bundle is for $(<"$UNPACK/profile"), not $PROFILE"
   [[ "$(<"$UNPACK/version")" == "$VERSION" ]] || die "offline bundle version $(<"$UNPACK/version") does not match requested $VERSION"
-  [[ -f "$UNPACK/images.tar" ]] && docker load -i "$UNPACK/images.tar" >/dev/null
+  OFFLINE_IMAGES="$UNPACK/images.tar"
   if [[ -f "$UNPACK/release.tar.gz" ]]; then
     mkdir -p "$UNPACK/release"
     verify_archive_paths "$UNPACK/release.tar.gz"
@@ -274,6 +271,22 @@ fi
    -n "$EMBEDDINGGEMMA_METAL_URL" && "$EMBEDDINGGEMMA_METAL_SHA256" =~ ^[0-9a-f]{64}$ &&
    "$EMBEDDINGGEMMA_METAL_BYTES" =~ ^[1-9][0-9]*$ ]] || \
   die "release manifest has an invalid EmbeddingGemma contract"
+
+ENGINE_LIB="$SOURCE_DIR/deploy/scripts/container-engine.sh"
+[[ -r "$ENGINE_LIB" ]] || die "release container-engine support is missing"
+# shellcheck source=container-engine.sh
+source "$ENGINE_LIB"
+say "Preparing the container engine"
+SOVEREIGN_ENGINE_MANIFEST="$COMPONENT_MANIFEST"
+sovereign_engine_require || die \
+  "container-engine setup could not complete; existing appliance data is safe"
+if [[ "$PROFILE" == cuda-x86_64 ]]; then
+  sovereign_engine_docker info --format '{{json .Runtimes}}' | grep -qi nvidia || \
+    die "NVIDIA Container Toolkit is not configured for the selected engine"
+fi
+if [[ -n "${OFFLINE_IMAGES:-}" && -f "$OFFLINE_IMAGES" ]]; then
+  sovereign_engine_docker load -i "$OFFLINE_IMAGES" >/dev/null
+fi
 
 say "Installing release assets"
 RELEASES="$SOVEREIGN_HOME/releases"

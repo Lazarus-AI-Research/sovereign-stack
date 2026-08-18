@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Minimal Docker CLI fixture for non-mutating installer lifecycle tests.
 set -euo pipefail
+while [[ "${1:-}" == --context || "${1:-}" == --config ]]; do
+  shift 2
+done
 case "${1:-}" in
+  context)
+    [[ "${2:-}" == show ]] || exit 2
+    printf 'fixture-context\n'
+    exit 0
+    ;;
   inspect)
     [[ -n "${SOVEREIGN_TEST_DOCKER_OWNER:-}" ]] || exit 1
     if [[ " $* " == *" --format "* ]]; then

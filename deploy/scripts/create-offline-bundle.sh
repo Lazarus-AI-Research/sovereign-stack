@@ -56,9 +56,13 @@ artifact_json() {
     "$(json_escape "$name")" "$(json_escape "$source")" "$hash" "$bytes"
 }
 
-for command in docker tar openssl sed awk; do need "$command"; done
-docker info >/dev/null 2>&1 || die "Docker is not running"
+for command in tar openssl sed awk; do need "$command"; done
 [[ -d "$CURRENT/deploy" && -f "$ENV_FILE" ]] || die "SovereignStack is not installed at $SOVEREIGN_HOME"
+ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
+[[ -r "$ENGINE_LIB" ]] || die "container-engine support is missing from the installed release"
+# shellcheck source=container-engine.sh
+source "$ENGINE_LIB"
+sovereign_engine_require
 
 INSTALLED_PROFILE="$(<"$SOVEREIGN_HOME/state/profile")"
 PROFILE="${PROFILE:-$INSTALLED_PROFILE}"
@@ -95,12 +99,12 @@ IMAGE_JSON="$TMP_ROOT/images.jsonl"
 for key in "${IMAGE_KEYS[@]}"; do
   ref="$(env_value "$key")"
   [[ -n "$ref" ]] || die "$key is missing from $ENV_FILE"
-  if ! docker image inspect "$ref" >/dev/null 2>&1; then
+  if ! sovereign_engine_docker image inspect "$ref" >/dev/null 2>&1; then
     (( PULL_MISSING == 1 )) || die "image is not present locally: $ref"
     echo "pulling $ref" >&2
-    docker pull "$ref" >/dev/null
+    sovereign_engine_docker pull "$ref" >/dev/null
   fi
-  inspect="$(docker image inspect --format '{{.Id}} {{.Size}}' "$ref")"
+  inspect="$(sovereign_engine_docker image inspect --format '{{.Id}} {{.Size}}' "$ref")"
   image_hash="${inspect%% *}"; image_hash="${image_hash#sha256:}"
   image_bytes="${inspect##* }"
   artifact_json "$key" "$ref" "$image_hash" "$image_bytes" >> "$IMAGE_JSON"
@@ -109,7 +113,7 @@ for key in "${IMAGE_KEYS[@]}"; do
 done
 
 echo "saving ${#IMAGE_REFS[@]} images (this can take several minutes)..." >&2
-docker save -o "$STAGE/images.tar" "${IMAGE_REFS[@]}"
+sovereign_engine_docker save -o "$STAGE/images.tar" "${IMAGE_REFS[@]}"
 
 MODEL_JSON="$TMP_ROOT/models.jsonl"
 : > "$MODEL_JSON"

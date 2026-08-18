@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "version": "0.1.0-rc.6",
   "runtime_version": "0.1.0-rc.4",
   "runtime_commit": "89762bd5ef7ea142e129ef7ab0c9d5a03adb63a5",
@@ -19,6 +19,44 @@
     "url": "https://github.com/QuixiAI/embeddinggemma.c/releases/download/v0.3.1/embeddinggemma-darwin-arm64-metal",
     "sha256": "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5",
     "bytes": 509680
+  },
+  "installer_dependencies": {
+    "metal-arm64": {
+      "colima": {
+        "version": "0.10.3",
+        "artifact": "colima-Darwin-arm64",
+        "url": "https://github.com/abiosoft/colima/releases/download/v0.10.3/colima-Darwin-arm64",
+        "sha256": "980ad8bf61a4ca370243f4cb41401a61276dcd2c2502bee7b9b86f9250169f34",
+        "bytes": 15656320,
+        "format": "executable"
+      },
+      "lima": {
+        "version": "2.2.0",
+        "artifact": "lima-2.2.0-Darwin-arm64.tar.gz",
+        "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-2.2.0-Darwin-arm64.tar.gz",
+        "sha256": "bbdef91774885a0d05f7b048c4eb89ae2bcf3a0c252ae7ca7934e63df76d93c3",
+        "bytes": 37586365,
+        "format": "tar.gz"
+      },
+      "docker_cli": {
+        "version": "29.7.2",
+        "artifact": "docker-29.7.2.tgz",
+        "url": "https://download.docker.com/mac/static/stable/aarch64/docker-29.7.2.tgz",
+        "sha256": "b8683ed19d1f06048a496f9b8429e2c71d0b088d475b7487c054ea3666c02a3c",
+        "bytes": 18920558,
+        "format": "tar.gz"
+      },
+      "docker_compose": {
+        "version": "5.5.0",
+        "artifact": "docker-compose-darwin-aarch64",
+        "url": "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-darwin-aarch64",
+        "signature_url": "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-darwin-aarch64.sigstore.json",
+        "signer_identity_regexp": "^https://github.com/docker/github-builder/.github/workflows/bake.yml@a492c6d04fd3315f67230809b44d60cc0acd50b3$",
+        "sha256": "6777710e5a5db5709e5f4b5985844e74b73cc1a6123e3a6690b6ababf2deaf51",
+        "bytes": 46920594,
+        "format": "executable"
+      }
+    }
   },
   "supported_profiles": ["cuda-x86_64", "metal-arm64"],
   "third_party_images": [

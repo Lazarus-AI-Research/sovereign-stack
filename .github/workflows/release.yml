@@ -291,6 +291,27 @@ jobs:
             --certificate-identity-regexp "$METAL_SIGNER" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$METAL_ARTIFACT"
+          while IFS= read -r dependency; do
+            name="$(jq -r '.key' <<<"$dependency")"
+            artifact="$(jq -r '.value.artifact' <<<"$dependency")"
+            url="$(jq -r '.value.url' <<<"$dependency")"
+            sha256="$(jq -r '.value.sha256' <<<"$dependency")"
+            bytes="$(jq -r '.value.bytes' <<<"$dependency")"
+            signature_url="$(jq -r '.value.signature_url // empty' <<<"$dependency")"
+            signer="$(jq -r '.value.signer_identity_regexp // empty' <<<"$dependency")"
+            curl -fsSL --retry 4 -o "$artifact" "$url"
+            echo "$sha256  $artifact" | sha256sum -c -
+            test "$(stat -c %s "$artifact")" = "$bytes"
+            if [[ -n "$signature_url" ]]; then
+              curl -fsSL --retry 4 -o "$artifact.sigstore.json" "$signature_url"
+              cosign verify-blob \
+                --bundle "$artifact.sigstore.json" \
+                --certificate-identity-regexp "$signer" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                "$artifact"
+            fi
+            echo "verified installer dependency $name $artifact"
+          done < <(jq -c '.installer_dependencies["metal-arm64"] | to_entries[]' release/release-source.json)
       - name: Generate release manifest
         run: |
           VERSION="${GITHUB_REF_NAME#v}"

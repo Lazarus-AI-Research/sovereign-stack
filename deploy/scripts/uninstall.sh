@@ -32,14 +32,21 @@ case "$PROFILE" in
   *) OVERLAY="" ;;
 esac
 
-if [[ -n "$OVERLAY" && -d "$CURRENT/deploy" && -f "$ENV_FILE" ]] && command -v docker >/dev/null 2>&1; then
-  COMPOSE=(docker compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE"
-    -f "$CURRENT/deploy/compose/compose.yml"
-    -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml")
-  if (( PURGE == 1 )); then
-    "${COMPOSE[@]}" down -v --remove-orphans || true
+ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
+if [[ -n "$OVERLAY" && -d "$CURRENT/deploy" && -f "$ENV_FILE" && -r "$ENGINE_LIB" ]]; then
+  # shellcheck source=container-engine.sh
+  source "$ENGINE_LIB"
+  if sovereign_engine_require; then
+    COMPOSE=(sovereign_engine_compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE"
+      -f "$CURRENT/deploy/compose/compose.yml"
+      -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml")
+    if (( PURGE == 1 )); then
+      "${COMPOSE[@]}" down -v --remove-orphans || true
+    else
+      "${COMPOSE[@]}" down --remove-orphans || true
+    fi
   else
-    "${COMPOSE[@]}" down --remove-orphans || true
+    echo "warning: container engine is unavailable; container data was left unchanged" >&2
   fi
 fi
 

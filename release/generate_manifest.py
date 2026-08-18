@@ -81,8 +81,8 @@ def main() -> None:
     args = parser.parse_args()
 
     source = json.loads(args.source.read_text(encoding="utf-8"))
-    if source.get("schema_version") != "1.1":
-        raise ValueError("release source must use schema_version 1.1")
+    if source.get("schema_version") != "1.2":
+        raise ValueError("release source must use schema_version 1.2")
     if not COMMIT.fullmatch(args.stack_commit):
         raise ValueError("--stack-commit must be a full 40-character commit")
     if not COMMIT.fullmatch(source["runtime_commit"]):
@@ -131,10 +131,21 @@ def main() -> None:
 
     metal_agent = checked_component(source, "metal_agent", signed=True)
     embedding_runtime = checked_component(source, "embedding_runtime")
+    installer_dependencies = source.get("installer_dependencies") or {}
+    metal_dependencies = installer_dependencies.get("metal-arm64") or {}
+    required_metal_dependencies = {"colima", "lima", "docker_cli", "docker_compose"}
+    if set(metal_dependencies) != required_metal_dependencies:
+        raise ValueError("release source must pin the complete metal-arm64 installer toolchain")
+    checked_dependencies = {}
+    for name in sorted(required_metal_dependencies):
+        dependency = checked_component(metal_dependencies, name, signed=name == "docker_compose")
+        if dependency.get("format") not in {"executable", "tar.gz"}:
+            raise ValueError(f"release source installer dependency {name} has an invalid format")
+        checked_dependencies[name] = dependency
     model_fields = {"id", "repository", "revision", "profiles", "role", "artifact", "artifacts", "sha256", "modalities"}
     models = [{key: value for key, value in model.items() if key in model_fields} for model in source["models"]]
     manifest = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "version": version,
         "stack_commit": args.stack_commit,
         "runtime_version": runtime_version,
@@ -145,6 +156,7 @@ def main() -> None:
         "models": models,
         "metal_agent": metal_agent,
         "embedding_runtime": embedding_runtime,
+        "installer_dependencies": {"metal-arm64": checked_dependencies},
         "schemas": schema_inventory(args.schema_dir),
         "assets": source.get("assets", []),
     }

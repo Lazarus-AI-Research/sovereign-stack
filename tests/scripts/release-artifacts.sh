@@ -33,7 +33,7 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 schema = json.load(open(sys.argv[3], encoding="utf-8"))
 Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 runtime_version = manifest["runtime_version"]
-assert manifest["schema_version"] == "1.1"
+assert manifest["schema_version"] == "1.2"
 metal = manifest["metal_agent"]
 assert metal["version"] == "0.1.0-rc.4"
 assert metal["version"] != manifest["version"]
@@ -43,6 +43,14 @@ assert metal["signature_url"] == metal["url"] + ".sigstore.json"
 assert metal["sha256"] == "ab8eabebac94f719325ce57f901962544ad068debc7b9f274334303b2fda393d"
 assert metal["bytes"] == 74820904
 assert manifest["embedding_runtime"]["version"] == "0.3.1"
+dependencies = manifest["installer_dependencies"]["metal-arm64"]
+assert set(dependencies) == {"colima", "lima", "docker_cli", "docker_compose"}
+assert dependencies["colima"]["version"] == "0.10.3"
+assert dependencies["docker_cli"]["version"] == "29.7.2"
+assert dependencies["docker_compose"]["signature_url"].endswith(".sigstore.json")
+for dependency in dependencies.values():
+    assert len(dependency["sha256"]) == 64
+    assert dependency["bytes"] > 0
 assert {schema["name"] for schema in manifest["schemas"]} >= {
     "release-manifest.schema.json", "runtime-config.schema.json"
 }

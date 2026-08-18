@@ -3,10 +3,10 @@
   "$id": "https://schemas.lazarus.ai/sovereign/release-manifest.schema.json",
   "title": "SovereignStack release manifest",
   "type": "object",
-  "required": ["schema_version", "version", "stack_commit", "runtime_version", "runtime_commit", "supported_profiles", "images", "models", "metal_agent", "embedding_runtime", "schemas"],
+  "required": ["schema_version", "version", "stack_commit", "runtime_version", "runtime_commit", "supported_profiles", "images", "models", "metal_agent", "embedding_runtime", "installer_dependencies", "schemas"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": "1.1" },
+    "schema_version": { "const": "1.2" },
     "version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
     "stack_commit": { "$ref": "#/$defs/commit" },
     "runtime_version": { "type": "string", "pattern": "^0\\.1\\.0(?:-rc\\.[0-9]+)?$" },
@@ -22,6 +22,24 @@
     "models": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/model" } },
     "metal_agent": { "$ref": "#/$defs/signedArtifact" },
     "embedding_runtime": { "$ref": "#/$defs/versionedArtifact" },
+    "installer_dependencies": {
+      "type": "object",
+      "required": ["metal-arm64"],
+      "additionalProperties": false,
+      "properties": {
+        "metal-arm64": {
+          "type": "object",
+          "required": ["colima", "lima", "docker_cli", "docker_compose"],
+          "additionalProperties": false,
+          "properties": {
+            "colima": { "$ref": "#/$defs/installerDependency" },
+            "lima": { "$ref": "#/$defs/installerDependency" },
+            "docker_cli": { "$ref": "#/$defs/installerDependency" },
+            "docker_compose": { "$ref": "#/$defs/installerDependency" }
+          }
+        }
+      }
+    },
     "schemas": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifact" } },
     "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" } }
   },
@@ -88,6 +106,25 @@
         "url": { "type": "string", "format": "uri" },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "installerDependency": {
+      "type": "object",
+      "required": ["version", "artifact", "url", "sha256", "bytes", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "artifact": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "signature_url": { "type": "string", "format": "uri" },
+        "signer_identity_regexp": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "format": { "enum": ["executable", "tar.gz"] }
+      },
+      "dependentRequired": {
+        "signature_url": ["signer_identity_regexp"],
+        "signer_identity_regexp": ["signature_url"]
       }
     },
     "signedArtifact": {
