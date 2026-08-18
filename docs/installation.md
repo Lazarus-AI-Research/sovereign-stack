@@ -54,6 +54,17 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
   | SOVEREIGN_VERSION=0.1.0-rc.6 bash
 ```
 
+For headless automation, pass `--json`. Stdout then contains only JSON Lines
+matching `schemas/installer-event.schema.json`; human progress and invoked-tool
+output use stderr. The latest event and resumable journal are written
+atomically to `~/.sovereign/state/install-event.json` and
+`~/.sovereign/state/install-journal.env`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0/deploy/scripts/install.sh \
+  | bash -s -- --json
+```
+
 The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
 owner-only appliance secrets, pulls digest-pinned images from the signed

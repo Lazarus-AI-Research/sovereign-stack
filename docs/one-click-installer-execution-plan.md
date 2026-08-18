@@ -277,9 +277,10 @@ Item 4 is not release-complete until it passes on a reset Ubuntu 24.04 NVIDIA
 host through the real reboot and first inference journey. A portable,
 kernel-matched offline Ubuntu package closure also remains open.
 
-The macOS launcher portion of item 6 is implemented: the package crosses into
-the signed-in user's launchd session, opens a visible Terminal window, mirrors
-bootstrap output to an owner-private log, rejects duplicate launches, and
-retains failures for recovery. Headless structured output is still open.
-Items 5, 7, and 8 also remain open, including the cross-platform bootstrap
-state machine and the full clean-machine release matrix.
+Item 6 is implemented. The macOS package crosses into the signed-in user's
+launchd session, opens a visible Terminal window, mirrors bootstrap output to
+an owner-private log, rejects duplicate launches, and retains failures for
+recovery. The headless installer reserves stdout for versioned JSON Lines,
+keeps human/tool output on stderr, and atomically persists its latest event.
+Items 5, 7, and 8 remain open, including replacement of shell orchestration
+with the shared bootstrap executable and the full clean-machine release matrix.

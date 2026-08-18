@@ -19,7 +19,72 @@ SOVEREIGN_BIN_DIR="$TEST_HOME/bin" \
 SOVEREIGN_SOURCE_DIR="$ROOT" \
 SOVEREIGN_INCLUDE_MODELS=0 \
 SOVEREIGN_SKIP_START=1 \
-  "$ROOT/deploy/scripts/install.sh" --profile metal-arm64
+  "$ROOT/deploy/scripts/install.sh" --profile metal-arm64 --json \
+  > "$TEST_HOME/install-events.jsonl" 2> "$TEST_HOME/install-human.log"
+
+# JSON mode reserves stdout for a versioned event stream while preserving
+# ordinary command output on stderr. The latest event is also replaced
+# atomically on disk for package launchers and recovery tools.
+python3 - "$TEST_HOME/install-events.jsonl" "$TEST_HOME/state/install-event.json" \
+  "$ROOT/schemas/installer-event.schema.json" <<'PY'
+import json
+import sys
+
+from jsonschema import Draft202012Validator, FormatChecker
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+schema = json.load(open(sys.argv[3], encoding="utf-8"))
+validator = Draft202012Validator(schema, format_checker=FormatChecker())
+assert events
+required = {
+    "schema_version", "sequence", "timestamp", "version", "profile",
+    "stage", "status", "message", "data_safe", "recovery", "component",
+    "current_bytes", "total_bytes",
+}
+assert all(set(event) == required for event in events)
+assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+assert all(event["schema_version"] == 1 for event in events)
+assert all(event["profile"] == "metal-arm64" for event in events)
+assert all(not list(validator.iter_errors(event)) for event in events)
+assert any(event["stage"] == "engine" for event in events)
+assert events[-1]["stage"] == "complete"
+assert events[-1]["status"] == "completed"
+assert events[-1]["data_safe"] is True
+latest = json.load(open(sys.argv[2], encoding="utf-8"))
+assert latest == events[-1]
+PY
+grep -q 'Checking metal-arm64 prerequisites' "$TEST_HOME/install-human.log"
+grep -q "SovereignStack $VERSION installed for metal-arm64" "$TEST_HOME/install-human.log"
+grep -qx 'stage=complete' "$TEST_HOME/state/install-journal.env"
+
+FAILED_EVENT_HOME="$TEST_HOME/failed-event-install"
+set +e
+SOVEREIGN_HOME="$FAILED_EVENT_HOME" \
+SOVEREIGN_BIN_DIR="$FAILED_EVENT_HOME/bin" \
+SOVEREIGN_SOURCE_DIR="$ROOT" \
+  "$ROOT/deploy/scripts/install.sh" --profile unsupported --json \
+  > "$TEST_HOME/failed-install-events.jsonl" 2> "$TEST_HOME/failed-install-human.log"
+FAILED_INSTALL_STATUS=$?
+set -e
+(( FAILED_INSTALL_STATUS != 0 ))
+python3 - "$TEST_HOME/failed-install-events.jsonl" \
+  "$ROOT/schemas/installer-event.schema.json" <<'PY'
+import json
+import sys
+
+from jsonschema import Draft202012Validator, FormatChecker
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+schema = json.load(open(sys.argv[2], encoding="utf-8"))
+validator = Draft202012Validator(schema, format_checker=FormatChecker())
+assert all(not list(validator.iter_errors(event)) for event in events)
+assert events[-1]["stage"] == "failed"
+assert events[-1]["status"] == "failed"
+assert events[-1]["data_safe"] is True
+assert events[-1]["recovery"]
+PY
+grep -q 'error: unsupported profile unsupported' "$TEST_HOME/failed-install-human.log"
+grep -qx 'stage=failed' "$FAILED_EVENT_HOME/state/install-journal.env"
 
 SOVEREIGN_HOME="$TEST_HOME" "$TEST_HOME/bin/sovereign" validate
 if SOVEREIGN_TEST_DOCKER_OWNER=/another/install \

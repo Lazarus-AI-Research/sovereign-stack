@@ -16,6 +16,7 @@ RELEASE_URL="${SOVEREIGN_RELEASE_URL:-}"
 OFFLINE_BUNDLE=""
 OFFLINE_MODE=0
 RESUME_MODE=0
+JSON_OUTPUT="${SOVEREIGN_INSTALL_JSON:-0}"
 EMBEDDINGGEMMA_MODEL_REPOSITORY=ggml-org/embeddinggemma-300M-qat-q4_0-GGUF
 EMBEDDINGGEMMA_MODEL_REVISION=8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73
 EMBEDDINGGEMMA_MODEL_ARTIFACT=embeddinggemma-300M-qat-Q4_0.gguf
@@ -30,9 +31,21 @@ while [[ $# -gt 0 ]]; do
     --domain) ACCESS_MODE=domain; ACCESS_TARGET="$2"; shift 2 ;;
     --offline-bundle) OFFLINE_BUNDLE="$2"; shift 2 ;;
     --resume) RESUME_MODE=1; shift ;;
+    --json) JSON_OUTPUT=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+[[ "$JSON_OUTPUT" == 0 || "$JSON_OUTPUT" == 1 ]] || {
+  echo "SOVEREIGN_INSTALL_JSON must be 0 or 1" >&2
+  exit 2
+}
+if [[ "$JSON_OUTPUT" == 1 ]]; then
+  # Preserve the caller's stdout exclusively for JSON Lines. All existing
+  # human and child-process output continues on stderr.
+  exec 3>&1
+  exec 1>&2
+fi
 
 if [[ -n "$OFFLINE_BUNDLE" && "$OFFLINE_BUNDLE" != /* ]]; then
   OFFLINE_BUNDLE="$PWD/$OFFLINE_BUNDLE"
@@ -40,7 +53,43 @@ fi
 
 RELEASE_URL="${RELEASE_URL:-https://github.com/$REPOSITORY/releases/download/v$VERSION}"
 
-say() { printf '\n==> %s\n' "$*"; }
+EVENT_SEQUENCE=0
+EVENT_STATE_READY=0
+CURRENT_STAGE=initializing
+json_escape() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+structured_event() {
+  local stage="$1" status="$2" message="$3" data_safe="$4" recovery="$5"
+  local component="${6:-}" current_bytes="${7:-0}" total_bytes="${8:-0}"
+  local timestamp event_profile event temporary
+  EVENT_SEQUENCE=$((EVENT_SEQUENCE + 1))
+  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  event_profile="${PROFILE:-unknown}"
+  event="$(printf '{"schema_version":1,"sequence":%s,"timestamp":"%s","version":"%s","profile":"%s","stage":"%s","status":"%s","message":"%s","data_safe":%s,"recovery":"%s","component":"%s","current_bytes":%s,"total_bytes":%s}' \
+    "$EVENT_SEQUENCE" "$timestamp" "$(json_escape "$VERSION")" \
+    "$(json_escape "$event_profile")" "$(json_escape "$stage")" \
+    "$(json_escape "$status")" "$(json_escape "$message")" "$data_safe" \
+    "$(json_escape "$recovery")" "$(json_escape "$component")" \
+    "$current_bytes" "$total_bytes")"
+  if [[ "$EVENT_STATE_READY" == 1 ]]; then
+    temporary="$SOVEREIGN_HOME/state/install-event.json.tmp.$$"
+    printf '%s\n' "$event" > "$temporary"
+    chmod 600 "$temporary"
+    mv "$temporary" "$SOVEREIGN_HOME/state/install-event.json"
+  fi
+  [[ "$JSON_OUTPUT" != 1 ]] || printf '%s\n' "$event" >&3
+}
+say() {
+  printf '\n==> %s\n' "$*"
+  structured_event "$CURRENT_STAGE" progress "$*" true ""
+}
 die() {
   if [[ -n "${SOVEREIGN_HOME:-}" && "$SOVEREIGN_HOME" != / && "$SOVEREIGN_HOME" != "$HOME" ]] &&
      declare -F journal_stage >/dev/null 2>&1; then
@@ -109,10 +158,13 @@ file_bytes() {
 if (( EUID == 0 )); then
   die "run the installer as the login user who will own the appliance; it requests administrator approval only for host provisioning"
 fi
+mkdir -p "$SOVEREIGN_HOME/state"
+EVENT_STATE_READY=1
 
 journal_stage() {
-  local stage="$1" detail="${2:-}" journal temporary
+  local stage="$1" detail="${2:-}" journal temporary status recovery
   [[ "$stage" =~ ^[a-z0-9-]+$ && "$detail" != *$'\n'* && "$detail" != *$'\r'* ]] || return 1
+  CURRENT_STAGE="$stage"
   journal="$SOVEREIGN_HOME/state/install-journal.env"
   mkdir -p "$SOVEREIGN_HOME/state"
   temporary="$journal.tmp.$$"
@@ -127,6 +179,22 @@ journal_stage() {
   } > "$temporary"
   chmod 600 "$temporary"
   mv "$temporary" "$journal"
+  status=started
+  recovery=""
+  case "$stage" in
+    failed)
+      status=failed
+      recovery="Resolve the reported issue, then rerun sovereign-install; existing appliance data is safe."
+      ;;
+    awaiting-reboot)
+      status=waiting
+      recovery="Reboot once; automatic installation resume is enabled."
+      ;;
+    complete|source-verified|host-ready)
+      status=completed
+      ;;
+  esac
+  structured_event "$stage" "$status" "$detail" true "$recovery"
 }
 
 run_privileged() {
@@ -621,9 +689,21 @@ download_hf() {
     total="$( { curl -fsSIL "$url" 2>/dev/null || true; } | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {gsub("\\r", "", $2); value=$2} END{print value+0}')"
   fi
   started="$(date +%s)"
+  write_download_progress() {
+    local download_stage="$1" current="$2" event_status=progress progress_tmp
+    progress_tmp="$SOVEREIGN_HOME/state/install-progress.json.tmp.$$"
+    printf '{"role":"%s","stage":"%s","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
+      "$(json_escape "$role")" "$(json_escape "$download_stage")" \
+      "$(json_escape "$file")" "$current" "${total:-0}" "$started" > "$progress_tmp"
+    chmod 600 "$progress_tmp"
+    mv "$progress_tmp" "$SOVEREIGN_HOME/state/install-progress.json"
+    [[ "$download_stage" != complete ]] || event_status=completed
+    structured_event models "$event_status" "$download_stage $file" true "" \
+      "$role" "$current" "${total:-0}"
+  }
   tracked_curl() {
-    local resume="$1" pid result current progress_tmp
-    progress_tmp="$SOVEREIGN_HOME/state/install-progress.json.tmp"
+    local resume="$1" pid result current now last_event
+    last_event=$((started - 5))
     [[ -f "$destination.part" ]] || : > "$destination.part"
     if [[ -n "${HF_TOKEN:-}" ]]; then
       if [[ "$resume" == true ]]; then curl -fL --retry 5 -C - -H "Authorization: Bearer $HF_TOKEN" -o "$destination.part" "$url" &
@@ -633,9 +713,11 @@ download_hf() {
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do
       current="$(wc -c < "$destination.part" 2>/dev/null || printf 0)"
-      printf '{"role":"%s","stage":"downloading","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
-        "$role" "${file//\"/}" "$current" "${total:-0}" "$started" > "$progress_tmp"
-      mv "$progress_tmp" "$SOVEREIGN_HOME/state/install-progress.json"
+      now="$(date +%s)"
+      if (( now - last_event >= 5 )); then
+        write_download_progress downloading "$current"
+        last_event="$now"
+      fi
       sleep 1
     done
     wait "$pid"; result=$?
@@ -655,12 +737,11 @@ download_hf() {
     tracked_curl false || \
       die "download failed for $repo/$file; set HF_TOKEN if the repository is gated"
   fi
-  printf '{"role":"%s","stage":"verifying","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
-    "$role" "${file//\"/}" "$(wc -c < "$destination.part")" "${total:-0}" "$started" > "$SOVEREIGN_HOME/state/install-progress.json"
+  write_download_progress verifying "$(wc -c < "$destination.part")"
   [[ "$(sha256 "$destination.part")" == "$expected" ]] || die "model checksum mismatch: $file"
   mv "$destination.part" "$destination"
-  printf '{"role":"%s","stage":"complete","file":"%s","current":%s,"total":%s,"started_unix":%s}\n' \
-    "$role" "${file//\"/}" "$(wc -c < "$destination")" "$(wc -c < "$destination")" "$started" > "$SOVEREIGN_HOME/state/install-progress.json"
+  total="$(wc -c < "$destination")"
+  write_download_progress complete "$total"
 }
 
 journal_stage models "installing selected runtimes and model weights"

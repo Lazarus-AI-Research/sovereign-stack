@@ -215,7 +215,10 @@ branch. P0.6 remains a separate ReCursor repository and release effort.
   caching, and restricts key administration to appliance administrators. The
   companion `codex/ui-followups` branch provides Copy and confirmed Revoke UI.
 - Additional fixes cover SS-006's partial-download race and SS-015's native
-  generation shutdown/startup lifecycle.
+  generation shutdown/startup lifecycle. The package launcher now keeps macOS
+  installation visible in Terminal, and `install.sh --json` emits a versioned
+  JSON Lines event contract on clean stdout while atomically persisting the
+  latest event for recovery tooling.
 
 Automated verification covers the generated manifest against JSON Schema,
 shell parsing, release/config generation, launchd retry and rollback, eval

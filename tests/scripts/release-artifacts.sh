@@ -58,7 +58,8 @@ for dependency in dependencies.values():
     assert len(dependency["sha256"]) == 64
     assert dependency["bytes"] > 0
 assert {schema["name"] for schema in manifest["schemas"]} >= {
-    "release-manifest.schema.json", "runtime-config.schema.json"
+    "installer-event.schema.json", "release-manifest.schema.json",
+    "runtime-config.schema.json"
 }
 assets = {asset["name"]: asset for asset in manifest["assets"]}
 assert assets["embeddinggemma-darwin-arm64-metal"]["sha256"] == "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5"
