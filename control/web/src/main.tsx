@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { PoweredBy } from "./PoweredBy";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { locale } from "./i18n";
 import "./styles.css";
 
@@ -13,7 +14,7 @@ document.documentElement.lang = locale;
 // BRANDING.md).
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary><App /></ErrorBoundary>
     <PoweredBy />
   </StrictMode>,
 );

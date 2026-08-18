@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
+import { FormEvent, ReactNode, SyntheticEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -11,6 +11,8 @@ import {
   EmbeddingProfile,
   EvalReport,
   Features,
+  GatewayKeyList,
+  IssuedGatewayKey,
   IndexVersion,
   Identity,
   Job,
@@ -59,6 +61,16 @@ const LEGACY_PATHS: Record<string, PortalPage> = {
 const ROLE_LEVEL = { member: 0, manager: 1, admin: 2 };
 
 const RUNTIME_STATES = ["initializing", "downloading", "compiling", "loading", "smoke_testing", "healthy"];
+
+function savedSidebarCollapsed() {
+  try {
+    const value = localStorage.getItem("sovereign-sidebar-collapsed");
+    if (value === null || value === "false") return false;
+    if (value === "true") return true;
+    localStorage.removeItem("sovereign-sidebar-collapsed");
+  } catch { /* Storage can be disabled; the visible default remains usable. */ }
+  return false;
+}
 
 function StatePill({ state }: { state?: string }) {
   const tone = state === "healthy" || state === "ready" || state === "active" || state === "succeeded" || state === "complete" || state === "running" || state === "enabled" || state === "network" || state === "this computer"
@@ -263,12 +275,21 @@ function Models({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [profile, setProfile] = useState("");
   const [credentials, setCredentials] = useState<CredentialMetadata[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ id: "", role: "generation", source: "cloud", provider: "openai", model: "", revision: "", artifact: "", sha256: "", base_url: "", credential_id: "" });
   const refresh = useCallback(async () => {
-    const [modelResult, credentialResult, catalogResult] = await Promise.all([api.models(), api.credentials().catch(() => ({ credentials: [] })), api.modelCatalog()]);
-    setModels(modelResult.models); setCredentials(credentialResult.credentials);
-    setCatalog(catalogResult.models); setProfile(catalogResult.profile);
+    setLoading(true); setLoadError("");
+    try {
+      const [modelResult, credentialResult, catalogResult] = await Promise.all([api.models(), api.credentials().catch(() => ({ credentials: [] })), api.modelCatalog()]);
+      setModels(modelResult.models ?? []); setCredentials(credentialResult.credentials ?? []);
+      setCatalog(catalogResult.models ?? []); setProfile(catalogResult.profile);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Model information is unavailable.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => { refresh().catch(() => {}); }, [refresh]);
 
@@ -288,18 +309,35 @@ function Models({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
     }
   }
 
+  const installedCatalog = catalog.filter((item) => item.registered);
+  const availableCatalog = catalog.filter((item) => !item.registered);
+  const customModels = models.filter((model) => !catalog.some((item) => item.id === model.id));
+
   return <>
-    <section className="card">
-      <PanelTitle title="Recommended models" subtitle={`Reviewed for ${profile || "this appliance"}. Technical registry pins are managed automatically.`} />
-      <div className="catalog-grid">{catalog.map((item) => <article className={`catalog-card ${item.recommended ? "recommended" : ""}`} key={item.id}>
-        <div className="row"><span className="catalog-role">{item.role}</span>{item.recommended && <span className="recommendation">Recommended</span>}</div>
-        <h3>{item.display_name}</h3><p>{item.description}</p>
-        <div className="catalog-meta"><span>{formatBytes(item.download_bytes)}</span><span>{item.capabilities.join(" · ")}</span></div>
-        {!item.compatible ? <div className="compatibility-error">{item.compatibility_reason || `Not compatible with ${profile}`}</div> : <button disabled={item.role === "embedding" && item.registered} onClick={() => run(`${item.registered ? "Start" : "Install"} ${item.display_name}`, async () => { await api.installCatalogModel(item.id); await refresh(); })}>{item.role === "embedding" && item.registered ? "Built in" : item.registered ? "Use this model" : "Install"}</button>}
-      </article>)}</div>
+    <section className="card models-intro">
+      <PanelTitle title="Model library" subtitle="SovereignStack ships a small reviewed catalog for this hardware. Add an OpenAI-compatible, cloud, or pinned local model when you need something else."
+        action={<button className="secondary" onClick={() => setShowForm(true)}>Add model</button>} />
+      <div className="model-summary" aria-label="Model library summary">
+        <div><span>Installed</span><strong>{models.length}</strong><small>{installedCatalog.length} from the reviewed catalog</small></div>
+        <div><span>Available</span><strong>{availableCatalog.length}</strong><small>{catalog.length} reviewed for {profile || "this hardware"}</small></div>
+        <div><span>Custom or remote</span><strong>{customModels.length}</strong><small>Managed by this appliance</small></div>
+      </div>
+      {loading && <p className="notice" role="status">Loading installed and compatible models…</p>}
+      {loadError && <div className="inline-error" role="alert"><span>{loadError}</span><button className="small secondary" onClick={refresh}>Retry</button></div>}
     </section>
     <section className="card">
-      <PanelTitle title="Installed and custom models" subtitle="Add a custom provider or pinned model only when the recommended catalog is not enough."
+      <PanelTitle title="Recommended for this appliance" subtitle={`Reviewed for ${profile || "the detected hardware"}. A short list is intentional: incompatible models are disabled with an explanation.`} />
+      {!loading && catalog.length === 0 && !loadError ? <Empty>No catalog models were returned for this hardware. Add a compatible custom or remote model below.</Empty> : <div className="catalog-grid">{catalog.map((item) => <article className={`catalog-card ${item.recommended ? "recommended" : ""}`} key={item.id}>
+        <div className="row"><span className="catalog-role">{item.role}</span>{item.recommended && <span className="recommendation">Recommended</span>}</div>
+        <h3>{item.display_name}</h3><p>{item.description}</p>
+        <div className="catalog-details"><span><strong>Status</strong>{item.registered ? "Installed" : "Available"}</span><span><strong>Stable alias</strong>{item.id}</span><span><strong>Download</strong>{formatBytes(item.download_bytes)}</span><span><strong>Works with</strong>{item.compatible_profiles.join(", ")}</span></div>
+        <div className="catalog-meta"><span>{item.capabilities.join(" · ")}</span><span>Reviewed local model</span></div>
+        {!item.compatible ? <div className="compatibility-error">{item.compatibility_reason || `Not compatible with ${profile}`}</div> : <button disabled={item.role === "embedding" && item.registered} onClick={() => run(`${item.registered ? "Start" : "Install"} ${item.display_name}`, async () => { await api.installCatalogModel(item.id); await refresh(); })}>{item.role === "embedding" && item.registered ? "Built in" : item.registered ? "Use this model" : "Install"}</button>}
+      </article>)}</div>}
+      {!loading && availableCatalog.length === 0 && installedCatalog.length > 0 && <p className="notice">All reviewed models compatible with this appliance are already installed.</p>}
+    </section>
+    <section className="card">
+      <PanelTitle title="Installed and custom models" subtitle="Local, remote, and cloud entries use stable aliases so applications do not depend on provider-specific names."
         action={<button className="secondary" onClick={() => setShowForm(!showForm)}>{showForm ? "Close advanced" : "Add custom model"}</button>} />
       {showForm && <form className="form-grid inset" onSubmit={submit}>
         <label>Product ID<input required value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="team-coding-model" /></label>
@@ -313,7 +351,7 @@ function Models({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
         <label className="wide">Remote base URL<input value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://host.example/v1" /></label>
         <div className="wide form-actions"><button type="submit">Save model</button></div>
       </form>}
-      {models.length === 0 ? <Empty>No models are registered.</Empty> : <div className="table-wrap"><table>
+      {!loading && models.length === 0 ? <Empty>No models are registered. Choose a reviewed model above or use Add custom model.</Empty> : models.length > 0 && <div className="table-wrap"><table>
         <thead><tr><th>Model</th><th>Role</th><th>Source</th><th>Validation</th><th>Runtime</th><th></th></tr></thead>
         <tbody>{models.map((model) => <tr key={model.id}>
           <td><span className="strong">{model.id}</span><small className="block mono clip">{model.model}</small></td>
@@ -440,14 +478,16 @@ function Evaluations({ run }: { run: RunAction }) {
 function Access({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   const [credentials, setCredentials] = useState<CredentialMetadata[]>([]);
   const [credentialForm, setCredentialForm] = useState({ id: "", provider: "openai", label: "", secret: "" });
-  const [keys, setKeys] = useState<Record<string, unknown>>({});
+  const [keys, setKeys] = useState<GatewayKeyList>({ keys: [], base_url: `${window.location.origin}/api/openai/v1` });
   const [keyForm, setKeyForm] = useState({ alias: "", models: "assistant-large", budget: "", rpm: "", tpm: "" });
-  const [issuedKey, setIssuedKey] = useState<Record<string, unknown> | null>(null);
+  const [issuedKey, setIssuedKey] = useState<IssuedGatewayKey | null>(null);
+  const [keyError, setKeyError] = useState("");
   const refresh = useCallback(async () => {
-    const [credentialResult, keyResult] = await Promise.all([api.credentials(), api.gatewayKeys().catch(() => ({}))]);
-    setCredentials(credentialResult.credentials); setKeys(keyResult);
+    const [credentialResult, keyResult] = await Promise.all([api.credentials(), api.gatewayKeys()]);
+    setCredentials(credentialResult.credentials ?? []); setKeys({ keys: keyResult.keys ?? [], base_url: keyResult.base_url || `${window.location.origin}/api/openai/v1` });
+    setKeyError("");
   }, []);
-  useEffect(() => { refresh().catch(() => {}); }, [refresh]);
+  useEffect(() => { refresh().catch((error) => setKeyError(error instanceof Error ? error.message : "Gateway keys are unavailable.")); }, [refresh]);
 
   async function saveCredential(event: FormEvent) {
     event.preventDefault();
@@ -457,13 +497,13 @@ function Access({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
   }
   async function createKey(event: FormEvent) {
     event.preventDefault();
-    const request: { key_alias: string; models?: string[]; max_budget?: number; rpm_limit?: number; tpm_limit?: number } = {
+    const request: { key_alias: string; models: string[]; max_budget?: number; rpm_limit?: number; tpm_limit?: number } = {
       key_alias: keyForm.alias, models: keyForm.models.split(",").map((item) => item.trim()).filter(Boolean),
     };
     if (keyForm.budget) request.max_budget = Number(keyForm.budget);
     if (keyForm.rpm) request.rpm_limit = Number(keyForm.rpm);
     if (keyForm.tpm) request.tpm_limit = Number(keyForm.tpm);
-    let result: Record<string, unknown> | null = null;
+    let result: IssuedGatewayKey | null = null;
     if (await run("Issue gateway key", async () => { result = await api.createGatewayKey(request); })) {
       setIssuedKey(result); setKeyForm({ ...keyForm, alias: "" }); await refresh();
     }
@@ -480,15 +520,24 @@ function Access({ run, confirm }: { run: RunAction; confirm: ConfirmAction }) {
       </form>
       <div className="compact-list">{credentials.map((credential) => <div key={credential.id}><div><strong>{credential.label}</strong><small>{credential.provider} · {credential.id}</small></div><button className="small danger" onClick={async () => { if (await confirm({ title: `Delete ${credential.label}?`, message: "Models using this credential will stop working until another credential is selected.", confirmLabel: "Delete credential", danger: true })) await run("Delete credential", async () => { await api.deleteCredential(credential.id); await refresh(); }); }}>Delete</button></div>)}</div>
     </section>
-    <section className="card"><PanelTitle title="Gateway keys" subtitle="Issue scoped keys with model, spend, and request limits." />
+    <section className="card"><PanelTitle title="Gateway keys" subtitle="Use scoped keys from host applications through the appliance's OpenAI-compatible endpoint." />
+      <div className="gateway-base"><span>Base URL</span><code>{keys.base_url}</code><button className="small secondary" onClick={() => navigator.clipboard.writeText(keys.base_url)}>Copy</button></div>
       <form className="stack-form inset" onSubmit={createKey}>
         <label>Key alias<input required value={keyForm.alias} onChange={(e) => setKeyForm({ ...keyForm, alias: e.target.value })} /></label>
-        <label>Allowed models<input value={keyForm.models} onChange={(e) => setKeyForm({ ...keyForm, models: e.target.value })} /></label>
+        <label>Allowed models<input required value={keyForm.models} onChange={(e) => setKeyForm({ ...keyForm, models: e.target.value })} /></label>
         <div className="form-grid"><label>Max budget<input type="number" min="0" step="0.01" value={keyForm.budget} onChange={(e) => setKeyForm({ ...keyForm, budget: e.target.value })} /></label><label>RPM<input type="number" min="1" value={keyForm.rpm} onChange={(e) => setKeyForm({ ...keyForm, rpm: e.target.value })} /></label><label>TPM<input type="number" min="1" value={keyForm.tpm} onChange={(e) => setKeyForm({ ...keyForm, tpm: e.target.value })} /></label></div>
         <button type="submit">Issue key</button>
       </form>
-      {issuedKey && <div className="secret-once"><strong>Copy this response now</strong><pre>{JSON.stringify(issuedKey, null, 2)}</pre></div>}
-      <details><summary>Current key metadata</summary><pre>{JSON.stringify(keys, null, 2)}</pre></details>
+      {issuedKey && <div className="secret-once gateway-secret">
+        <strong>Copy this key now—it will not be shown again</strong>
+        <div className="copy-row"><input aria-label="One-time gateway key" readOnly value={issuedKey.secret} /><button onClick={() => navigator.clipboard.writeText(issuedKey.secret)}>Copy key</button></div>
+        <dl><div><dt>Alias</dt><dd>{issuedKey.alias}</dd></div><div><dt>Models</dt><dd>{issuedKey.models.join(", ") || "All permitted models"}</dd></div><div><dt>Base URL</dt><dd>{issuedKey.base_url}</dd></div>{issuedKey.expires_at && <div><dt>Expires</dt><dd>{issuedKey.expires_at}</dd></div>}</dl>
+        <p>Connectivity test (the key is read without adding it to shell history):</p>
+        <pre>{`read -s SOVEREIGN_API_KEY && echo\nprintf 'header = "Authorization: Bearer %s"\n' "$SOVEREIGN_API_KEY" | \\\n  curl --config - -fsS "${issuedKey.base_url}/models"\nunset SOVEREIGN_API_KEY`}</pre>
+        <div className="actions"><button className="secondary" onClick={() => setIssuedKey(null)}>I saved the key</button></div>
+      </div>}
+      {keyError && <div className="inline-error" role="alert"><span>{keyError}</span><button className="small secondary" onClick={() => refresh().catch((error) => setKeyError(String(error)))}>Retry</button></div>}
+      <div className="compact-list key-list">{keys.keys.length === 0 ? <Empty>No scoped keys have been issued.</Empty> : keys.keys.map((key) => <div key={key.id}><div><strong>{key.alias || "Unnamed key"}</strong><small>{key.models.join(", ") || "All models"}{key.expires_at ? ` · expires ${key.expires_at}` : ""}{key.max_budget !== undefined ? ` · budget ${key.max_budget}` : ""}</small></div><button className="small danger" onClick={async () => { if (await confirm({ title: `Revoke ${key.alias || "this key"}?`, message: "Applications using this key will immediately lose access. This action cannot be undone.", confirmLabel: "Revoke key", danger: true })) await run("Revoke gateway key", async () => { await api.deleteGatewayKey(key.id); await refresh(); }); }}>Revoke</button></div>)}</div>
     </section>
   </div>;
 }
@@ -498,20 +547,32 @@ function Resilience({ run, confirm }: { run: RunAction; confirm: ConfirmAction }
   const [bundles, setBundles] = useState<BundleManifest[]>([]);
   const [profile, setProfile] = useState("");
   const [includeWeights, setIncludeWeights] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [verification, setVerification] = useState<Record<string, "valid" | "invalid">>({});
   const refresh = useCallback(async () => {
-    const [backupResult, bundleResult, manifest] = await Promise.all([api.backups(), api.bundles(), api.manifest().catch(() => null)]);
-    setBackups(backupResult.backups); setBundles(bundleResult.bundles); setProfile(manifest?.profile ?? "");
+    setLoading(true); setLoadError("");
+    try {
+      const [backupResult, bundleResult, manifest] = await Promise.all([api.backups(), api.bundles(), api.manifest().catch(() => null)]);
+      setBackups(backupResult.backups ?? []); setBundles(bundleResult.bundles ?? []); setProfile(manifest?.profile ?? "");
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Backup information is unavailable.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
-  useEffect(() => { refresh().catch(() => {}); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
   return <div className="two-column">
     <section className="card"><PanelTitle title="Backups" subtitle="Databases and product config; model weights and secrets are excluded."
       action={<button onClick={() => run("Create backup", async () => { await completeJob(await api.createBackup()); await refresh(); })}>Create backup</button>} />
-      {backups.length === 0 ? <Empty>No completed backups.</Empty> : <div className="compact-list">{backups.map((backup) => <div key={backup.id}><div><strong>{backup.id}</strong><small>{backup.files.length} files · {backup.created_at}</small></div><div className="actions"><button className="small secondary" onClick={() => run("Verify backup", async () => { const result = await api.verifyBackup(backup.id); if (!result.valid) throw new ApiError(422, result.problems.join(", ")); })}>Verify</button><button className="small danger" onClick={async () => { if (await confirm({ title: "Restore this backup?", message: "Restore verifies this backup, creates a fresh rollback point, then replaces live databases and configuration. Chat pauses temporarily; a failed restore automatically reapplies the rollback point.", confirmLabel: "Restore backup", danger: true })) await run("Restore backup", async () => { await completeJob(await api.restoreBackup(backup.id)); }); }}>Restore</button></div></div>)}</div>}
+      {loading && <Empty>Loading backups…</Empty>}
+      {loadError && <div className="inline-error" role="alert"><span>Backups could not be loaded: {loadError}</span><button className="small secondary" onClick={refresh}>Retry</button></div>}
+      {!loading && !loadError && backups.length === 0 ? <Empty>No backups yet. Create one before reinstalling, updating, or restoring this appliance.</Empty> : <div className="compact-list">{backups.map((backup) => { const files = backup.files ?? []; const size = files.reduce((total, file) => total + (file.bytes || 0), 0); const verificationState = verification[backup.id] || backup.verification_state || "not checked"; return <div key={backup.id}><div><strong>{backup.id}</strong><small>{files.length} files · {size ? formatBytes(size) : "size unavailable"} · {backup.created_at}</small><small className="block">Verification: <StatePill state={verificationState} />{backup.verified_at ? ` · checked ${backup.verified_at}` : ""}</small></div><div className="actions"><button className="small secondary" onClick={() => run("Verify backup", async () => { const result = await api.verifyBackup(backup.id); setVerification((current) => ({ ...current, [backup.id]: result.valid ? "valid" : "invalid" })); await refresh(); if (!result.valid) throw new ApiError(422, result.problems.join(", ")); })}>Verify</button><button className="small danger" onClick={async () => { if (await confirm({ title: "Restore this backup?", message: "Restore verifies this backup, creates a fresh rollback point, then replaces live databases and configuration. Chat pauses temporarily; a failed restore automatically reapplies the rollback point.", confirmLabel: "Restore backup", danger: true })) await run("Restore backup", async () => { await completeJob(await api.restoreBackup(backup.id)); await refresh(); }); }}>Restore</button></div></div>; })}</div>}
     </section>
     <section className="card"><PanelTitle title="Offline bundles" subtitle={`Same-platform distribution for ${profile || "the installed profile"}.`} />
       <div className="inset bundle-create"><label className="check"><input type="checkbox" checked={includeWeights} onChange={(e) => setIncludeWeights(e.target.checked)} /> Include the complete local model cache</label><p>Bundles always contain pinned application and service images{profile === "metal-arm64" ? " plus the signed Metal agent" : ""}.</p><button onClick={() => run("Create offline bundle", async () => { await completeJob(await api.createBundle(profile, includeWeights ? ["all"] : []), 7_200_000); await refresh(); })}>Create bundle</button></div>
-      {bundles.length === 0 ? <Empty>No completed bundles.</Empty> : <div className="compact-list">{bundles.map((bundle) => <div key={bundle.bundle_id}><div><strong>{bundle.bundle_id}</strong><small>{bundle.profile} · {bundle.includes_weights ? "weights included" : "images only"} · {bundle.files.reduce((sum, file) => sum + file.bytes, 0) ? formatBytes(bundle.files.reduce((sum, file) => sum + file.bytes, 0)) : "size pending"}</small></div><a className="button small secondary" href={api.bundleDownloadURL(bundle.bundle_id)}>Download</a></div>)}</div>}
+      {!loading && !loadError && bundles.length === 0 ? <Empty>No completed bundles.</Empty> : <div className="compact-list">{bundles.map((bundle) => { const files = bundle.files ?? []; const size = files.reduce((sum, file) => sum + (file.bytes || 0), 0); return <div key={bundle.bundle_id}><div><strong>{bundle.bundle_id}</strong><small>{bundle.profile} · {bundle.includes_weights ? "weights included" : "images only"} · {size ? formatBytes(size) : "size pending"}</small></div><a className="button small secondary" href={api.bundleDownloadURL(bundle.bundle_id)}>Download</a></div>; })}</div>}
     </section>
   </div>;
 }
@@ -565,8 +626,44 @@ function Updates({ run }: { run: RunAction }) {
   </section>;
 }
 
-function EmbeddedApp({ title, src }: { title: string; src: string }) {
-  return <section className="embedded-app"><iframe title={title} src={src} allow="clipboard-read; clipboard-write" /></section>;
+function EmbeddedApp({ title, src, renewSession = false }: { title: string; src: string; renewSession?: boolean }) {
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const automaticRetries = useRef(0);
+  const retry = useCallback(() => { setState("loading"); setAttempt((value) => value + 1); }, []);
+  useEffect(() => {
+    if (state !== "loading") return;
+    const timeout = window.setTimeout(() => setState("error"), 20_000);
+    return () => window.clearTimeout(timeout);
+  }, [attempt, state]);
+  const separator = src.includes("?") ? "&" : "?";
+  const target = `${src}${separator}portal_attempt=${attempt}`;
+  const loaded = (event: SyntheticEvent<HTMLIFrameElement>) => {
+    let broken = false;
+    let handoff = false;
+    try {
+      const frame = event.currentTarget;
+      const rawText = frame.contentDocument?.body?.innerText.trim() ?? "";
+      const text = rawText.toLowerCase();
+      handoff = frame.contentWindow?.location.pathname === "/sso/simple";
+      broken = text === "404" || text.startsWith("404 not found") || text.startsWith("not found");
+      if (!broken && rawText.startsWith("{")) {
+        try { broken = Boolean((JSON.parse(rawText) as { error?: unknown }).error); } catch { /* It is an application page, not an API error document. */ }
+      }
+    } catch { /* The configured applications are same-origin; a future external app still gets a usable load state. */ }
+    if (handoff) return;
+    if (broken && renewSession && automaticRetries.current < 1) {
+      automaticRetries.current += 1;
+      retry();
+      return;
+    }
+    setState(broken ? "error" : "ready");
+  };
+  return <section className={`embedded-app embedded-${state}`}>
+    {state === "loading" && <div className="embedded-status" role="status">Opening {title}…</div>}
+    {state === "error" && <div className="embedded-status embedded-error" role="alert"><strong>{title} could not be opened</strong><p>The application may still be starting, or its sign-in handoff may have expired.</p><div className="actions"><button onClick={retry}>Retry with a new session</button><a className="button secondary" href="/admin/system">System status</a></div></div>}
+    <iframe key={attempt} title={title} src={target} allow="clipboard-read; clipboard-write" onLoad={loaded} onError={() => setState("error")} />
+  </section>;
 }
 
 function People({ run }: { run: RunAction }) {
@@ -629,7 +726,7 @@ export function Dashboard({ identity, onLogout }: { identity: Identity; onLogout
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sovereign-sidebar-collapsed") === "true");
+  const [collapsed, setCollapsed] = useState(savedSidebarCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [appearance, setAppearance] = useState<"system" | "dark" | "light">(() => (localStorage.getItem("sovereign-appearance") as "system" | "dark" | "light") || "system");
   const [confirmation, setConfirmation] = useState<({ title: string; message: string; confirmLabel?: string; danger?: boolean; resolve: (value: boolean) => void }) | null>(null);
@@ -676,6 +773,17 @@ export function Dashboard({ identity, onLogout }: { identity: Identity; onLogout
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [confirmation]);
+  useEffect(() => {
+    if (!collapsed) return;
+    const expandWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !mobileOpen) {
+        setCollapsed(false);
+        try { localStorage.setItem("sovereign-sidebar-collapsed", "false"); } catch { /* Keep the in-memory recovery path. */ }
+      }
+    };
+    window.addEventListener("keydown", expandWithEscape);
+    return () => window.removeEventListener("keydown", expandWithEscape);
+  }, [collapsed, mobileOpen]);
   const navigate = (path: string, explicitPage?: PortalPage) => {
     window.history.pushState({}, "", path);
     setPage(explicitPage ?? available.find((item) => item.path === path)?.page ?? "Chat");
@@ -683,7 +791,8 @@ export function Dashboard({ identity, onLogout }: { identity: Identity; onLogout
   };
   const setCollapsedState = () => {
     const next = !collapsed;
-    setCollapsed(next); localStorage.setItem("sovereign-sidebar-collapsed", String(next));
+    setCollapsed(next);
+    try { localStorage.setItem("sovereign-sidebar-collapsed", String(next)); } catch { /* The button remains reversible for this session. */ }
   };
   const primary = available.filter((item) => item.section === "primary");
   const admin = available.filter((item) => item.section === "admin");
@@ -704,7 +813,7 @@ export function Dashboard({ identity, onLogout }: { identity: Identity; onLogout
       <header><button className="mobile-menu" aria-label="Open navigation" onClick={() => setMobileOpen(true)}>☰</button><div><span className="eyebrow">Sovereign Portal</span><h1>{t(`nav.${page}`, page)}</h1></div><div className="spacer" />{busy && <span className="working"><i />{busy}</span>}<details className="account-menu"><summary aria-label="Open account menu">{(identity.display_name || identity.username).charAt(0).toUpperCase()}</summary><div className="account-popover"><strong>{identity.display_name || identity.username}</strong><small>{identity.username} · {identity.role}</small><button className="secondary" onClick={cycleAppearance}>Appearance: {appearance}</button><a className="button secondary" href="https://github.com/Lazarus-AI-Research/sovereign-stack/tree/main/docs" target="_blank" rel="noreferrer">Documentation</a><button className="secondary" onClick={onLogout}>{t("shell.signOut", "Sign out")}</button></div></details></header>
       {message && <div role={message.tone === "bad" ? "alert" : "status"} aria-live={message.tone === "bad" ? "assertive" : "polite"} className={`toast ${message.tone}`}><span>{message.text}</span><button aria-label="Dismiss notification" onClick={() => setMessage(null)}>×</button></div>}
       <div className={`content ${["Chat", "Grafana", "Phoenix"].includes(page) ? "app-content" : ""}`}>
-        {page === "Chat" && <EmbeddedApp title="Sovereign Chat" src="/api/control/v1/workspace/sso" />}
+        {page === "Chat" && <EmbeddedApp title="Sovereign Chat" src="/api/control/v1/workspace/sso" renewSession />}
         {page === "Activity" && <Activity canManage={ROLE_LEVEL[identity.role] >= ROLE_LEVEL.manager} run={run} />}
         {page === "Tools" && <Tools open={(path) => navigate(path)} />}
         {page === "System" && <Overview run={run} confirm={confirm} />}

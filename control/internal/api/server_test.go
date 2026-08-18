@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -174,6 +175,39 @@ func TestApplicationRegistryIsControlledAndRoleFiltered(t *testing.T) {
 	}
 	if len(body.Applications) != 1 || body.Applications[0]["id"] != "chat" {
 		t.Fatalf("unauthenticated test identity should receive member registry: %v", body.Applications)
+	}
+}
+
+func TestWorkspaceLoginRedirectUsesBrowserRoutesWithoutProxyPrefix(t *testing.T) {
+	redirect, err := workspaceLoginRedirect("/sso/simple?token=single-use", "admin", []string{"team-chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(redirect, "/apps/chat") {
+		t.Fatalf("redirect retained proxy prefix: %q", redirect)
+	}
+	parsed, err := url.Parse(redirect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Path != "/sso/simple" || parsed.Query().Get("token") != "single-use" ||
+		parsed.Query().Get("redirectTo") != "/workspace/team-chat" {
+		t.Fatalf("workspace redirect = %q", redirect)
+	}
+
+	emptyAdmin, err := workspaceLoginRedirect("/sso/simple?token=single-use", "admin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyURL, _ := url.Parse(emptyAdmin)
+	if emptyURL.Query().Get("redirectTo") != "/settings/workspaces" {
+		t.Fatalf("empty admin redirect = %q", emptyAdmin)
+	}
+	if _, err := workspaceLoginRedirect("https://evil.example/sso/simple?token=x", "admin", nil); err == nil {
+		t.Fatal("accepted an absolute workspace login URL")
+	}
+	if _, err := workspaceLoginRedirect("/sso/simple", "admin", nil); err == nil {
+		t.Fatal("accepted a workspace login URL without a token")
 	}
 }
 

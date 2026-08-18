@@ -40,10 +40,12 @@ type ManifestFile struct {
 }
 
 type Manifest struct {
-	ID        string         `json:"id"`
-	CreatedAt string         `json:"created_at"`
-	Files     []ManifestFile `json:"files"`
-	Excludes  []string       `json:"excludes"`
+	ID                string         `json:"id"`
+	CreatedAt         string         `json:"created_at"`
+	Files             []ManifestFile `json:"files"`
+	Excludes          []string       `json:"excludes"`
+	VerificationState string         `json:"verification_state,omitempty"`
+	VerifiedAt        string         `json:"verified_at,omitempty"`
 }
 
 func (d Deps) dir(id string) string { return filepath.Join(d.Root, "backups", id) }
@@ -182,11 +184,36 @@ func (d Deps) writeManifest(id, dir string) (*Manifest, error) {
 		}
 		manifest.Files = append(manifest.Files, ManifestFile{Name: entry.Name(), Bytes: size, SHA256: sum})
 	}
+	return manifest, writeManifestFile(filepath.Join(dir, "manifest.json"), manifest)
+}
+
+func writeManifestFile(path string, manifest *Manifest) error {
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return manifest, os.WriteFile(filepath.Join(dir, "manifest.json"), raw, 0o644)
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".manifest-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(raw); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func fileSHA256(path string) (string, int64, error) {
@@ -256,7 +283,15 @@ func (d Deps) Verify(id string) (map[string]any, error) {
 			problems = append(problems, entry.Name+": checksum mismatch")
 		}
 	}
-	return map[string]any{"backup_id": id, "valid": len(problems) == 0, "problems": problems}, nil
+	valid := len(problems) == 0
+	manifest.VerificationState = map[bool]string{true: "valid", false: "invalid"}[valid]
+	manifest.VerifiedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := writeManifestFile(filepath.Join(dir, "manifest.json"), &manifest); err != nil {
+		return nil, fmt.Errorf("record backup verification: %w", err)
+	}
+	return map[string]any{
+		"backup_id": id, "valid": valid, "problems": problems, "verified_at": manifest.VerifiedAt,
+	}, nil
 }
 
 type RestorePayload struct {

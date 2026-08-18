@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -167,6 +168,23 @@ func memberPath(path string) bool {
 		}
 	}
 	return false
+}
+
+func workspaceLoginRedirect(loginPath, role string, slugs []string) (string, error) {
+	target, err := url.Parse(loginPath)
+	if err != nil || target.IsAbs() || target.Host != "" || target.Path != "/sso/simple" || target.Query().Get("token") == "" {
+		return "", fmt.Errorf("workspace identity session returned an invalid login path")
+	}
+	redirectTo := "/settings/workspaces"
+	if len(slugs) > 0 {
+		redirectTo = "/workspace/" + url.PathEscape(slugs[0])
+	} else if role != "admin" {
+		return "", fmt.Errorf("no chat workspace is available for this account")
+	}
+	query := target.Query()
+	query.Set("redirectTo", redirectTo)
+	target.RawQuery = query.Encode()
+	return target.String(), nil
 }
 
 // themeFields is the cosmetic subset of the branding document that is safe to
@@ -1934,7 +1952,15 @@ func (s *Server) Handler() http.Handler {
 				errorJSON(w, http.StatusBadGateway, err.Error())
 				return
 			}
-			http.Redirect(w, r, "/apps/chat"+loginPath, http.StatusSeeOther)
+			redirect, err := workspaceLoginRedirect(loginPath, identity.Role, slugs)
+			if err != nil {
+				errorJSON(w, http.StatusConflict, err.Error())
+				return
+			}
+			// AnythingLLM's browser router is rooted at /; a visible /apps/chat
+			// prefix reaches its wildcard 404 even though Caddy stripped that
+			// prefix from the upstream HTTP request.
+			http.Redirect(w, r, redirect, http.StatusSeeOther)
 		})
 		mux.HandleFunc("GET "+p("/workspace/status"), func(w http.ResponseWriter, r *http.Request) {
 			name, _ := s.Workspace.AppName(r.Context())
