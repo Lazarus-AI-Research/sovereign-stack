@@ -330,9 +330,10 @@ BUNDLE="$TEST_HOME/bundles/lifecycle.tar.gz"
 SOVEREIGN_ENGINE_ARTIFACT_DIR="$BUNDLE_DEPS" \
 SOVEREIGN_HOME="$TEST_HOME" "$TEST_HOME/current/deploy/scripts/create-offline-bundle.sh" --no-pull --output "$BUNDLE"
 [[ -s "$BUNDLE" && -s "$BUNDLE.json" ]]
-tar -tzf "$BUNDLE" | grep -q 'installer-dependencies/cosign-test$'
-tar -tzf "$BUNDLE" | grep -q 'installer-dependencies/colima-disk.raw.gz$'
-tar -tzf "$BUNDLE" | grep -q 'installer-dependencies/docker-compose-test.sigstore.json$'
+tar -tzf "$BUNDLE" > "$TEST_HOME/bundle-files.txt"
+grep -q 'installer-dependencies/cosign-test$' "$TEST_HOME/bundle-files.txt"
+grep -q 'installer-dependencies/colima-disk.raw.gz$' "$TEST_HOME/bundle-files.txt"
+grep -q 'installer-dependencies/docker-compose-test.sigstore.json$' "$TEST_HOME/bundle-files.txt"
 
 OFFLINE_HOME="$TEST_HOME/offline-install"
 OFFLINE_BLOCKERS="$TEST_HOME/offline-blockers"
