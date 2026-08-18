@@ -1,25 +1,28 @@
 #!/bin/bash
 set -eu
 
-PACKAGE_ROOT=/usr/local/share/sovereign-stack
-VERSION="$(cat "$PACKAGE_ROOT/VERSION")"
-INSTALL_USER="$(stat -f '%Su' /dev/console)"
+PACKAGE_ROOT="${SOVEREIGN_PACKAGE_ROOT:-/usr/local/share/sovereign-stack}"
+LAUNCHCTL="${SOVEREIGN_PACKAGE_LAUNCHCTL:-/bin/launchctl}"
+SUDO="${SOVEREIGN_PACKAGE_SUDO:-/usr/bin/sudo}"
+OPEN="${SOVEREIGN_PACKAGE_OPEN:-/usr/bin/open}"
+INSTALL_USER="${SOVEREIGN_INSTALL_USER:-$(stat -f '%Su' /dev/console)}"
 if [ -z "$INSTALL_USER" ] || [ "$INSTALL_USER" = root ] || [ "$INSTALL_USER" = loginwindow ]; then
   echo "No signed-in desktop user was found; run /usr/local/bin/sovereign-install after signing in." >&2
   exit 0
 fi
-INSTALL_HOME="$(dscl . -read "/Users/$INSTALL_USER" NFSHomeDirectory | awk '{print $2}')"
-LOG_DIR="$INSTALL_HOME/Library/Logs/SovereignStack"
-install -d -m 700 -o "$INSTALL_USER" "$LOG_DIR"
-install -m 600 -o "$INSTALL_USER" /dev/null "$LOG_DIR/install.log"
+INSTALL_HOME="${SOVEREIGN_INSTALL_HOME:-$(dscl . -read "/Users/$INSTALL_USER" NFSHomeDirectory | awk '{print $2}')}"
+INSTALL_UID="${SOVEREIGN_INSTALL_UID:-$(id -u "$INSTALL_USER")}"
+LAUNCHER="$PACKAGE_ROOT/launch-install.command"
+if [ ! -x "$LAUNCHER" ]; then
+  echo "The visible SovereignStack package launcher is missing: $LAUNCHER" >&2
+  exit 1
+fi
 
-# The native installer finishes immediately while the reviewed shell installer
-# starts the portal, opens first-run setup, and completes provisioning in the
-# background as the owning desktop user.
-sudo -u "$INSTALL_USER" env \
-  HOME="$INSTALL_HOME" \
-  SOVEREIGN_VERSION="$VERSION" \
-  SOVEREIGN_ACCESS_MODE=desktop \
-  /usr/bin/nohup /bin/bash "$PACKAGE_ROOT/install.sh" \
-  >>"$LOG_DIR/install.log" 2>&1 &
+# Enter the signed-in user's launchd domain so Terminal is visible on that
+# desktop. The launcher itself owns no privilege and writes only to the user's
+# private log and appliance directories.
+"$LAUNCHCTL" asuser "$INSTALL_UID" "$SUDO" -u "$INSTALL_USER" env \
+  HOME="$INSTALL_HOME" USER="$INSTALL_USER" \
+  "$OPEN" -a Terminal "$LAUNCHER"
+echo "SovereignStack installation opened in Terminal for $INSTALL_USER."
 exit 0

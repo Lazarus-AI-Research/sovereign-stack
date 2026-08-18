@@ -30,13 +30,16 @@ When Apple credentials are configured, the macOS package is Developer ID
 signed, notarized, and stapled. Otherwise its filename ends in `-unsigned.pkg`
 and macOS displays the expected Gatekeeper warnings. Opening either package
 installs a small native bootstrap and starts the same signed, version-pinned
-installation. After dpkg releases its package lock, the Ubuntu package uses a
-persistent systemd coordinator and prints one `journalctl` command for live
-progress and durable errors; it never hides failure in a detached `nohup` job.
-It resumes after a required reboot. The portal opens as soon as the control
-plane is ready. Every native package has detached Sigstore and SHA-256 verification
-artifacts on the release page, including the explicitly unsigned macOS package.
-The default local portal address is <http://127.0.0.1:54854/>.
+installation. On macOS, package installation opens a Terminal window for the
+signed-in user, keeps bootstrap output visible, and appends the same output to
+the owner-private `~/Library/Logs/SovereignStack/install.log`. After dpkg
+releases its package lock, the Ubuntu package uses a persistent systemd
+coordinator and prints one `journalctl` command for live progress and durable
+errors; it never hides failure in a detached `nohup` job. It resumes after a
+required reboot. The portal opens as soon as the control plane is ready. Every
+native package has detached Sigstore and SHA-256 verification artifacts on the
+release page, including the explicitly unsigned macOS package. The default
+local portal address is <http://127.0.0.1:54854/>.
 
 For the stable release:
 

@@ -275,6 +275,11 @@ launching an invisible `nohup` job.
 
 Item 4 is not release-complete until it passes on a reset Ubuntu 24.04 NVIDIA
 host through the real reboot and first inference journey. A portable,
-kernel-matched offline Ubuntu package closure also remains open. Items 5
-through 8 remain open, including the cross-platform bootstrap state machine,
-the macOS progress launcher, and the full clean-machine release matrix.
+kernel-matched offline Ubuntu package closure also remains open.
+
+The macOS launcher portion of item 6 is implemented: the package crosses into
+the signed-in user's launchd session, opens a visible Terminal window, mirrors
+bootstrap output to an owner-private log, rejects duplicate launches, and
+retains failures for recovery. Headless structured output is still open.
+Items 5, 7, and 8 also remain open, including the cross-platform bootstrap
+state machine and the full clean-machine release matrix.

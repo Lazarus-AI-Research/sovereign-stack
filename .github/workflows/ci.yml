@@ -52,7 +52,7 @@ jobs:
           PY
       - name: Shipped scripts
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/macos/launch-install.command packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
           node --check workspace/sovereign/preload.js
           chmod +x tests/fixtures/bin/* tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
@@ -62,6 +62,7 @@ jobs:
           tests/scripts/ubuntu-provisioning.sh
           tests/scripts/ubuntu-install-resume.sh
           tests/scripts/linux-package-entrypoint.sh
+          tests/scripts/macos-package-entrypoint.sh
           packaging/linux/build-package.sh --output-dir "$RUNNER_TEMP"
           PACKAGE="$RUNNER_TEMP/SovereignStack-$(cat VERSION)-amd64.deb"
           dpkg-deb --contents "$PACKAGE" > "$RUNNER_TEMP/sovereign-deb-contents.txt"
