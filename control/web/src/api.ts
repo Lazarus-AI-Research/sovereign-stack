@@ -261,6 +261,8 @@ export interface BackupManifest {
   created_at: string;
   files: { name: string; bytes: number; sha256: string }[];
   excludes: string[];
+  verification_state?: "valid" | "invalid";
+  verified_at?: string;
 }
 
 export interface BundleManifest {
@@ -281,6 +283,35 @@ export interface CredentialMetadata {
   label: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface GatewayKeyMetadata {
+  id: string;
+  alias: string;
+  models: string[];
+  max_budget?: number;
+  spend?: number;
+  tpm_limit?: number;
+  rpm_limit?: number;
+  created_at?: string;
+  expires_at?: string;
+}
+
+export interface GatewayKeyList {
+  keys: GatewayKeyMetadata[];
+  base_url: string;
+}
+
+export interface IssuedGatewayKey {
+  secret: string;
+  id?: string;
+  alias: string;
+  models: string[];
+  max_budget?: number;
+  tpm_limit?: number;
+  rpm_limit?: number;
+  expires_at?: string;
+  base_url: string;
 }
 
 export interface Branding {
@@ -355,7 +386,7 @@ export const api = {
 
   backups: () => request<{ backups: BackupManifest[] }>("/backups"),
   createBackup: () => request<{ job_id: string }>("/backups", { method: "POST", body: "{}" }),
-  verifyBackup: (id: string) => request<{ valid: boolean; problems: string[] }>(`/backups/${idPath(id)}/verify`, { method: "POST" }),
+  verifyBackup: (id: string) => request<{ valid: boolean; problems: string[]; verified_at: string }>(`/backups/${idPath(id)}/verify`, { method: "POST" }),
   restoreBackup: (id: string) => request<{ job_id: string }>(`/backups/${idPath(id)}/restore`, { method: "POST", body: "{}" }),
   bundles: () => request<{ bundles: BundleManifest[] }>("/bundles"),
   createBundle: (profile: string, includeModels: string[]) => request<{ job_id: string }>("/bundles", {
@@ -368,10 +399,11 @@ export const api = {
     method: "POST", body: JSON.stringify(value),
   }),
   deleteCredential: (id: string) => request<unknown>(`/provider-credentials/${idPath(id)}`, { method: "DELETE" }),
-  gatewayKeys: () => request<Record<string, unknown>>("/gateway/keys"),
-  createGatewayKey: (value: { key_alias: string; models?: string[]; max_budget?: number; tpm_limit?: number; rpm_limit?: number }) => request<Record<string, unknown>>("/gateway/keys", {
+  gatewayKeys: () => request<GatewayKeyList>("/gateway/keys"),
+  createGatewayKey: (value: { key_alias: string; models: string[]; max_budget?: number; tpm_limit?: number; rpm_limit?: number }) => request<IssuedGatewayKey>("/gateway/keys", {
     method: "POST", body: JSON.stringify(value),
   }),
+  deleteGatewayKey: (id: string) => request<{ deleted: string }>(`/gateway/keys/${idPath(id)}`, { method: "DELETE" }),
 
   theme: () => request<import("./theme").Theme>("/theme"),
   branding: () => request<Branding>("/branding"),
