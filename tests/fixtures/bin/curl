@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Network-free success fixture used by installer compatibility probes.
+exit 0

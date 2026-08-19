@@ -18,10 +18,6 @@ done
 die() { echo "error: $*" >&2; exit 1; }
 [[ "$SOVEREIGN_HOME" != / && "$SOVEREIGN_HOME" != "$HOME" && -n "$SOVEREIGN_HOME" ]] || \
   die "refusing unsafe SOVEREIGN_HOME: $SOVEREIGN_HOME"
-if (( PURGE == 1 && CONFIRMED != 1 )); then
-  die "permanent deletion requires: sovereign uninstall --purge --yes"
-fi
-
 CURRENT="$SOVEREIGN_HOME/current"
 ENV_FILE="$SOVEREIGN_HOME/.env"
 PROFILE=""
@@ -32,14 +28,64 @@ case "$PROFILE" in
   *) OVERLAY="" ;;
 esac
 
-if [[ -n "$OVERLAY" && -d "$CURRENT/deploy" && -f "$ENV_FILE" ]] && command -v docker >/dev/null 2>&1; then
-  COMPOSE=(docker compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE"
-    -f "$CURRENT/deploy/compose/compose.yml"
-    -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml")
-  if (( PURGE == 1 )); then
-    "${COMPOSE[@]}" down -v --remove-orphans || true
+ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
+ENGINE_SUPPORT=0
+if [[ -n "$OVERLAY" && -d "$CURRENT/deploy" && -f "$ENV_FILE" && -r "$ENGINE_LIB" ]]; then
+  # shellcheck source=container-engine.sh
+  source "$ENGINE_LIB"
+  ENGINE_SUPPORT=1
+  COMPONENT_MANIFEST="$CURRENT/release/manifest.json"
+  [[ -f "$COMPONENT_MANIFEST" ]] || COMPONENT_MANIFEST="$CURRENT/release/release-source.json"
+  SOVEREIGN_ENGINE_MANIFEST="$COMPONENT_MANIFEST"
+  export SOVEREIGN_ENGINE_MANIFEST
+fi
+
+purge_preview() {
+  local volume provider="" managed_home="" managed_profile=""
+  printf 'Permanent purge preview:\n'
+  printf '  appliance files: %s\n' "$SOVEREIGN_HOME"
+  if [[ -f "$CURRENT/deploy/compose/compose.yml" ]]; then
+    while IFS= read -r volume; do
+      printf '  Docker volume: sovereign-stack_%s\n' "$volume"
+    done < <(awk '
+      /^volumes:/ { inside=1; next }
+      inside && /^[^[:space:]]/ { exit }
+      inside && /^  [A-Za-z0-9_-]+:/ {
+        value=$1; sub(":$", "", value); print value
+      }
+    ' "$CURRENT/deploy/compose/compose.yml")
+  fi
+  if (( ENGINE_SUPPORT == 1 )) && [[ -r "$(sovereign_engine_state_file)" ]]; then
+    provider="$(sovereign_engine_state_value "$(sovereign_engine_state_file)" provider)"
+    if [[ "$provider" == managed-colima ]]; then
+      managed_home="$(sovereign_engine_state_value "$(sovereign_engine_state_file)" colima_home)"
+      managed_profile="$(sovereign_engine_state_value "$(sovereign_engine_state_file)" colima_profile)"
+      printf '  managed Colima VM: %s (COLIMA_HOME=%s)\n' "${managed_profile:-unknown}" "${managed_home:-unknown}"
+    else
+      printf '  container engine: preserved (%s is not installer-owned)\n' "${provider:-unknown}"
+    fi
+  fi
+}
+
+if (( PURGE == 1 )); then
+  purge_preview
+  if (( CONFIRMED != 1 )); then
+    die "review the purge preview, then confirm with: sovereign uninstall --purge --yes"
+  fi
+fi
+
+if (( ENGINE_SUPPORT == 1 )); then
+  if sovereign_engine_require; then
+    COMPOSE=(sovereign_engine_compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE"
+      -f "$CURRENT/deploy/compose/compose.yml"
+      -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml")
+    if (( PURGE == 1 )); then
+      "${COMPOSE[@]}" down -v --remove-orphans || true
+    else
+      "${COMPOSE[@]}" down --remove-orphans || true
+    fi
   else
-    "${COMPOSE[@]}" down --remove-orphans || true
+    echo "warning: container engine is unavailable; container data was left unchanged" >&2
   fi
 fi
 
@@ -77,9 +123,17 @@ if [[ -f "$CLI" ]] && cmp -s "$CLI" "$CURRENT/deploy/scripts/sovereign" 2>/dev/n
 fi
 
 if (( PURGE == 1 )); then
+  if (( ENGINE_SUPPORT == 1 )); then
+    sovereign_engine_purge_managed || die \
+      "the installer-owned Colima VM could not be removed; appliance files were left in place"
+  fi
   rm -rf "$SOVEREIGN_HOME"
   echo "SovereignStack and all local appliance data were purged."
 else
+  if (( ENGINE_SUPPORT == 1 )); then
+    sovereign_engine_stop_managed || \
+      echo "warning: managed Colima could not be stopped; it was preserved" >&2
+  fi
   rm -f "$CURRENT"
   rm -rf "$SOVEREIGN_HOME/releases"
   mkdir -p "$SOVEREIGN_HOME/state"

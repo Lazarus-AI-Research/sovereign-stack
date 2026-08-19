@@ -148,12 +148,29 @@ func adminOnlyPath(path string) bool {
 		BasePath + "/users", BasePath + "/invitations", BasePath + "/provider-credentials",
 		BasePath + "/backups", BasePath + "/bundles", BasePath + "/branding",
 		BasePath + "/support-bundles", BasePath + "/updates", BasePath + "/features", BasePath + "/runtime/restart", BasePath + "/network", BasePath + "/repair",
+		BasePath + "/gateway/keys", BasePath + "/gateway/budgets", BasePath + "/gateway/usage", BasePath + "/gateway/config", BasePath + "/gateway/reload",
 	} {
 		if strings.HasPrefix(path, prefix) {
 			return true
 		}
 	}
 	return false
+}
+
+func publicGatewayBaseURL(r *http.Request) string {
+	scheme := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]))
+	if scheme != "http" && scheme != "https" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+	if host == "" || strings.ContainsAny(host, "/\\ \t\r\n") {
+		host = r.Host
+	}
+	return scheme + "://" + host + "/api/openai/v1"
 }
 
 func memberPath(path string) bool {
@@ -1994,7 +2011,7 @@ func (s *Server) Handler() http.Handler {
 			errorJSON(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, keys)
+		writeJSON(w, http.StatusOK, gateway.NormalizeKeyList(keys, publicGatewayBaseURL(r)))
 	})
 
 	mux.HandleFunc("POST "+p("/gateway/keys"), func(w http.ResponseWriter, r *http.Request) {
@@ -2003,12 +2020,23 @@ func (s *Server) Handler() http.Handler {
 			errorJSON(w, http.StatusBadRequest, "invalid key request")
 			return
 		}
+		request, err := gateway.ValidateKeyRequest(request)
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		key, err := s.Gateway.GenerateKey(r.Context(), request)
 		if err != nil {
 			errorJSON(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, key)
+		issued, err := gateway.NormalizeIssuedKey(key, request, publicGatewayBaseURL(r))
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusCreated, issued)
 	})
 
 	mux.HandleFunc("DELETE "+p("/gateway/keys/{id}"), func(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,16 @@ CURRENT="$SOVEREIGN_HOME/current"
 ENV_FILE="$SOVEREIGN_HOME/.env"
 [[ -d "$CURRENT/deploy" ]] || { echo "error: SovereignStack is not installed at $SOVEREIGN_HOME" >&2; exit 1; }
 [[ -f "$ENV_FILE" ]] || { echo "error: $ENV_FILE is missing" >&2; exit 1; }
+ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
+[[ -r "$ENGINE_LIB" ]] || { echo "error: container-engine support is missing from the installed release" >&2; exit 1; }
+# shellcheck source=container-engine.sh
+source "$ENGINE_LIB"
+COMPONENT_MANIFEST="$CURRENT/release/manifest.json"
+[[ -f "$COMPONENT_MANIFEST" ]] || COMPONENT_MANIFEST="$CURRENT/release/release-source.json"
+SOVEREIGN_ENGINE_MANIFEST="$COMPONENT_MANIFEST"
+SOVEREIGN_ENGINE_OFFLINE=0
+[[ -f "$SOVEREIGN_HOME/state/offline" ]] && SOVEREIGN_ENGINE_OFFLINE=1
+export SOVEREIGN_ENGINE_MANIFEST SOVEREIGN_ENGINE_OFFLINE
 
 PROFILE="${SOVEREIGN_PROFILE:-$(<"$SOVEREIGN_HOME/state/profile")}"
 case "$PROFILE" in
@@ -16,9 +26,15 @@ case "$PROFILE" in
 esac
 
 compose() {
-  docker compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE" \
+  sovereign_engine_require
+  sovereign_engine_compose --project-directory "$SOVEREIGN_HOME" --env-file "$ENV_FILE" \
     -f "$CURRENT/deploy/compose/compose.yml" \
     -f "$CURRENT/deploy/compose/compose.runtime.${OVERLAY}.yml" "$@"
+}
+
+docker_command() {
+  sovereign_engine_require
+  sovereign_engine_docker "$@"
 }
 
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed 's/^"//;s/"$//'; }
@@ -95,8 +111,8 @@ ensure_project_owner() {
   local container owner expected
   expected="$(cd "$SOVEREIGN_HOME" && pwd -P)"
   for container in sovereign-postgres sovereign-runtime sovereign-embeddings sovereign-caddy; do
-    docker inspect "$container" >/dev/null 2>&1 || continue
-    owner="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container" 2>/dev/null || true)"
+    docker_command inspect "$container" >/dev/null 2>&1 || continue
+    owner="$(docker_command inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container" 2>/dev/null || true)"
     if [[ "$owner" != "$expected" && "${SOVEREIGN_ALLOW_PROJECT_TAKEOVER:-0}" != 1 ]]; then
       echo "error: $container belongs to another SovereignStack installation (${owner:-unknown})" >&2
       echo "stop that installation first; set SOVEREIGN_ALLOW_PROJECT_TAKEOVER=1 only for an intentional migration" >&2
@@ -127,6 +143,47 @@ start_metal_embeddings() {
     launchctl bootstrap "gui/$(id -u)" "$plist"
   fi
   launchctl kickstart -k "gui/$(id -u)/$label"
+}
+
+metal_generation_ready() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  [[ -s "$SOVEREIGN_HOME/agent.token" ]] || return 1
+  curl -fsS --max-time 5 -H "Authorization: Bearer $(<"$SOVEREIGN_HOME/agent.token")" \
+    http://127.0.0.1:9100/agent/manifest 2>/dev/null | \
+    grep -Eq '"generation"[^}]*"status"[[:space:]]*:[[:space:]]*"healthy"'
+}
+
+start_metal_generation() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  local label="com.lazarus.sovereign-runtime-agent"
+  local plist="$HOME/Library/LaunchAgents/$label.plist"
+  local deadline last_update
+  [[ -f "$plist" ]] || { echo "error: missing launchd service $plist" >&2; return 1; }
+  if ! launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+  fi
+  launchctl kickstart -k "gui/$(id -u)/$label"
+  deadline=$((SECONDS + ${SOVEREIGN_AGENT_TIMEOUT:-600}))
+  last_update=$SECONDS
+  echo "waiting for Metal generation service..."
+  until metal_generation_ready; do
+    (( SECONDS < deadline )) || {
+      tail -n 80 "$SOVEREIGN_HOME/logs/agent.log" 2>/dev/null || true
+      echo "error: Metal generation service did not become healthy; data is safe, see $SOVEREIGN_HOME/logs/agent.log" >&2
+      return 1
+    }
+    if (( SECONDS - last_update >= 15 )); then
+      echo "Metal generation service is still loading ($((SECONDS + ${SOVEREIGN_AGENT_TIMEOUT:-600} - deadline))s elapsed)..."
+      last_update=$SECONDS
+    fi
+    sleep 2
+  done
+  echo "Metal generation service: ready"
+}
+
+stop_metal_generation() {
+  [[ "$PROFILE" == metal-arm64 ]] || return 0
+  launchctl bootout "gui/$(id -u)/com.lazarus.sovereign-runtime-agent" 2>/dev/null || true
 }
 
 stop_metal_embeddings() {
@@ -175,17 +232,24 @@ open_portal() {
 
 wait_ready() {
   local deadline=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700}))
-  echo "models are loading in the background (the first start can take a while)..."
+  local last_update=$SECONDS runtime_state runtime_errors restarted=0 elapsed
+  echo "checking model services and runtime readiness..."
   if [[ "$PROFILE" == metal-arm64 ]]; then
     until curl -fsS http://127.0.0.1:42666/healthz >/dev/null 2>&1; do
       (( SECONDS < deadline )) || {
         echo "error: host embeddinggemma did not become ready before timeout" >&2
         return 1
       }
+      if (( SECONDS - last_update >= 15 )); then
+        elapsed=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700} - deadline))
+        echo "EmbeddingGemma: loading (${elapsed}s elapsed)"
+        last_update=$SECONDS
+      fi
       sleep 2
     done
+    echo "EmbeddingGemma: ready"
   else
-    until [[ "$(docker inspect --format '{{.State.Health.Status}}' sovereign-embeddings 2>/dev/null || true)" == healthy ]]; do
+    until [[ "$(docker_command inspect --format '{{.State.Health.Status}}' sovereign-embeddings 2>/dev/null || true)" == healthy ]]; do
       (( SECONDS < deadline )) || {
         compose logs --tail 120 sovereign-embeddings
         echo "error: embeddinggemma did not become ready before timeout" >&2
@@ -194,15 +258,39 @@ wait_ready() {
       sleep 2
     done
   fi
-  until docker exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
+  last_update=$SECONDS
+  until docker_command exec sovereign-runtime sovereign-runtime-healthcheck --ready >/dev/null 2>&1; do
+    runtime_state="$(operator_curl "$BASE_URL/api/control/v1/runtime/manifest" 2>/dev/null | \
+      sed -n 's/.*"state":"\([^"]*\)".*/\1/p' || true)"
+    if [[ "$runtime_state" == configuration_error || "$runtime_state" == runtime_error ]]; then
+      runtime_errors="$(operator_curl "$BASE_URL/api/control/v1/runtime/errors" 2>/dev/null || true)"
+      if [[ "$PROFILE" == metal-arm64 && "$runtime_errors" == *HOST_AGENT_UNREACHABLE* && "$restarted" == 0 ]] && \
+        metal_generation_ready; then
+        echo "Runtime reported HOST_AGENT_UNREACHABLE after the host recovered; restarting the runtime once..."
+        compose restart sovereign-runtime
+        restarted=1
+        sleep 5
+        continue
+      fi
+      printf '%s\n' "$runtime_errors" >&2
+      compose logs --tail 120 sovereign-runtime >&2
+      echo "error: runtime entered terminal state ${runtime_state}; data is safe, inspect the error above and $SOVEREIGN_HOME/logs" >&2
+      return 1
+    fi
     (( SECONDS < deadline )) || {
       compose ps
       compose logs --tail 120 sovereign-runtime
       echo "error: runtime did not become ready before timeout" >&2
       return 1
     }
+    if (( SECONDS - last_update >= 15 )); then
+      elapsed=$((SECONDS + ${SOVEREIGN_START_TIMEOUT:-2700} - deadline))
+      echo "Runtime: ${runtime_state:-starting} (${elapsed}s elapsed)"
+      last_update=$SECONDS
+    fi
     sleep 5
   done
+  echo "Runtime: ready"
 }
 
 refresh_gateway_config() {
@@ -309,7 +397,7 @@ usage() {
 Usage: sovereign <command> [options]
 
   up                         Pull, start, wait, and run the smoke suite
-  start                      Start the control portal without waiting for models
+  start                      Start only the control portal
   open                       Open the portal (or first-admin setup) in a browser
   url                        Print the portal URL
   access desktop             Bind the portal to this computer only
@@ -327,6 +415,7 @@ Usage: sovereign <command> [options]
   bundle create [options]    Create a same-platform offline bundle
   bundle install <archive>   Install a same-platform offline bundle
   validate                   Validate the resolved Compose configuration
+  repair                     Repair and fully probe the container engine
   update <version>           Back up and install a signed release; roll back on failure
   uninstall [--purge]        Remove the appliance; preserve data by default
   version                    Print the installed version
@@ -345,14 +434,11 @@ case "${1:-help}" in
     compose up -d caddy
     wait_portal
     open_portal
-    # Start inference dependencies after the portal is reachable. These
-    # commands return without waiting for model readiness.
-    compose up -d sovereign-docker-proxy sovereign-runtime || true
-    if [[ "$PROFILE" != metal-arm64 ]]; then compose up -d sovereign-embeddings || true; fi
     echo "portal ready: $BASE_URL/"
     ;;
   up)
     ensure_project_owner
+    start_metal_generation
     start_metal_embeddings
     if [[ ! -f "$SOVEREIGN_HOME/state/offline" ]]; then compose pull; fi
     compose up -d --remove-orphans
@@ -387,6 +473,8 @@ case "${1:-help}" in
   down)
     compose down
     stop_metal_embeddings
+    stop_metal_generation
+    sovereign_engine_stop_managed
     ;;
   status)
     compose ps
@@ -430,6 +518,23 @@ case "${1:-help}" in
     esac
     ;;
   validate) compose config -q && echo "Compose configuration valid ($PROFILE)" ;;
+  repair)
+    if [[ "$PROFILE" == cuda-x86_64 && ! -f "$SOVEREIGN_HOME/state/offline" ]]; then
+      SOVEREIGN_HOME="$SOVEREIGN_HOME" \
+      SOVEREIGN_BIN_DIR="$(<"$SOVEREIGN_HOME/state/bin-dir")" \
+      SOVEREIGN_SOURCE_DIR="$CURRENT" \
+      SOVEREIGN_ACCESS_MODE="$CURRENT_ACCESS_MODE" \
+      SOVEREIGN_SITE_ADDRESS="$(env_value SOVEREIGN_SITE_ADDRESS)" \
+      SOVEREIGN_INCLUDE_MODELS=0 \
+      SOVEREIGN_SKIP_HOSTD_INSTALL=1 \
+      SOVEREIGN_SKIP_START=1 \
+        "$CURRENT/deploy/scripts/install.sh" --version "$(env_value SOVEREIGN_VERSION)" --profile "$PROFILE"
+      echo "Ubuntu host dependencies and container engine repaired and compatibility checks passed"
+    else
+      sovereign_engine_repair "$COMPONENT_MANIFEST" "$PROFILE"
+      echo "container engine repaired and compatibility checks passed"
+    fi
+    ;;
   update)
     target_version="${2:-}"
     target_version="${target_version#v}"

@@ -1,8 +1,8 @@
 #!/bin/bash
 set -eu
 
-PACKAGE_ROOT=/usr/local/share/sovereign-stack
-VERSION="$(cat "$PACKAGE_ROOT/VERSION")"
+STATE_DIR="${SOVEREIGN_PACKAGE_STATE_DIR:-/var/lib/sovereign-stack}"
+UNIT_NAME="${SOVEREIGN_PACKAGE_UNIT:-sovereign-stack-package-install.service}"
 INSTALL_USER="${SUDO_USER:-}"
 if [ -z "$INSTALL_USER" ] || [ "$INSTALL_USER" = root ]; then
   INSTALL_USER="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1; exit}')"
@@ -11,16 +11,27 @@ if [ -z "$INSTALL_USER" ]; then
   echo "No appliance owner was found; run /usr/local/bin/sovereign-install as the intended user." >&2
   exit 0
 fi
-INSTALL_HOME="$(getent passwd "$INSTALL_USER" | cut -d: -f6)"
-LOG_DIR="$INSTALL_HOME/.local/state/sovereign-stack"
-install -d -m 700 -o "$INSTALL_USER" -g "$(id -gn "$INSTALL_USER")" "$LOG_DIR"
-install -m 600 -o "$INSTALL_USER" -g "$(id -gn "$INSTALL_USER")" /dev/null "$LOG_DIR/install.log"
-loginctl enable-linger "$INSTALL_USER" >/dev/null 2>&1 || true
+OWNER_UID="$(id -u "$INSTALL_USER")"
+if [ "$OWNER_UID" -lt 1000 ] || [ "$OWNER_UID" -ge 60000 ]; then
+  echo "Refusing non-login appliance owner $INSTALL_USER ($OWNER_UID)." >&2
+  exit 1
+fi
 
-runuser -u "$INSTALL_USER" -- env \
-  HOME="$INSTALL_HOME" \
-  SOVEREIGN_VERSION="$VERSION" \
-  SOVEREIGN_ACCESS_MODE=desktop \
-  /usr/bin/nohup /bin/bash "$PACKAGE_ROOT/install.sh" \
-  >>"$LOG_DIR/install.log" 2>&1 &
+install -d -m 755 "$STATE_DIR"
+OWNER_FILE="$STATE_DIR/package-owner"
+printf '%s\n' "$INSTALL_USER" > "$OWNER_FILE.tmp"
+chmod 600 "$OWNER_FILE.tmp"
+mv "$OWNER_FILE.tmp" "$OWNER_FILE"
+
+if [ "${SOVEREIGN_POSTINST_SYSTEMD:-0}" != 1 ] && [ ! -d /run/systemd/system ]; then
+  echo "The package is installed, but systemd is not active in this environment."
+  echo "Finish as $INSTALL_USER with: /usr/local/bin/sovereign-install"
+  exit 0
+fi
+
+systemctl daemon-reload
+systemctl enable --now --no-block "$UNIT_NAME"
+echo "SovereignStack installation will continue automatically after the package transaction."
+echo "Follow progress: sudo journalctl -fu $UNIT_NAME"
+echo "Check status:   systemctl status $UNIT_NAME"
 exit 0

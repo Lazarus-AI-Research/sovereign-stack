@@ -33,9 +33,10 @@ jobs:
         run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
       - name: Shell and repository checks
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/linux/postinst
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/build-package.sh packaging/macos/postinstall packaging/macos/launch-install.command packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
           chmod +x tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
+          tests/scripts/macos-package-entrypoint.sh
           git diff --check
       - name: Go services
         run: |
@@ -63,17 +64,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Ubuntu installer package
         run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          ROOT="$RUNNER_TEMP/sovereign-deb"
-          mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
-          cp deploy/scripts/install.sh "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          cp VERSION "$ROOT/usr/local/share/sovereign-stack/VERSION"
-          cp packaging/sovereign-install "$ROOT/usr/local/bin/sovereign-install"
-          cp packaging/linux/postinst "$ROOT/DEBIAN/postinst"
-          chmod 755 "$ROOT/DEBIAN/postinst" "$ROOT/usr/local/bin/sovereign-install" "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          printf 'Package: sovereign-stack-installer\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Lazarus AI Research <support@lazarusai.com>\nDepends: bash, curl, tar, openssl\nDescription: One-click SovereignStack private AI appliance installer\n' "$VERSION" > "$ROOT/DEBIAN/control"
-          dpkg-deb --build --root-owner-group "$ROOT" "SovereignStack-$VERSION-amd64.deb"
+          packaging/linux/build-package.sh \
+            --version "${GITHUB_REF_NAME#v}" --output-dir "$GITHUB_WORKSPACE"
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux
@@ -115,18 +107,11 @@ jobs:
           fi
 
           VERSION="${GITHUB_REF_NAME#v}"
-          ROOT="$RUNNER_TEMP/sovereign-pkg"
-          mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
-          cp deploy/scripts/install.sh "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          cp VERSION "$ROOT/usr/local/share/sovereign-stack/VERSION"
-          cp packaging/sovereign-install "$ROOT/usr/local/bin/sovereign-install"
-          chmod 755 "$ROOT/usr/local/bin/sovereign-install" "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          pkgbuild --root "$ROOT" --scripts packaging/macos \
-            --identifier ai.lazarus.sovereign-stack.installer --version "$VERSION" \
-            "$RUNNER_TEMP/SovereignStack-unsigned.pkg"
+          UNSIGNED_PACKAGE="$(packaging/macos/build-package.sh \
+            --version "$VERSION" --output-dir "$RUNNER_TEMP")"
 
           if (( signing_count == 0 )); then
-            cp "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64-unsigned.pkg"
+            cp "$UNSIGNED_PACKAGE" "SovereignStack-$VERSION-arm64-unsigned.pkg"
             {
               echo "### Unsigned macOS installer"
               echo "Apple credentials were not configured. Publishing the explicitly named unsigned package with SHA-256 and Sigstore verification artifacts."
@@ -143,7 +128,7 @@ jobs:
           security import "$RUNNER_TEMP/installer.p12" -P "$MACOS_INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           security list-keychain -d user -s "$KEYCHAIN"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          productsign --sign "$MACOS_INSTALLER_IDENTITY" "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64.pkg"
+          productsign --sign "$MACOS_INSTALLER_IDENTITY" "$UNSIGNED_PACKAGE" "SovereignStack-$VERSION-arm64.pkg"
           xcrun notarytool submit "SovereignStack-$VERSION-arm64.pkg" \
             --apple-id "$APPLE_NOTARY_ID" --team-id "$APPLE_NOTARY_TEAM_ID" \
             --password "$APPLE_NOTARY_PASSWORD" --wait
@@ -276,6 +261,42 @@ jobs:
             done
             (( verified == 1 )) || { echo "Unable to verify $ref@$digest after 3 attempts" >&2; exit 1; }
           done
+          METAL_ARTIFACT="$(jq -r .metal_agent.artifact release/release-source.json)"
+          METAL_URL="$(jq -r .metal_agent.url release/release-source.json)"
+          METAL_SIGNATURE_URL="$(jq -r .metal_agent.signature_url release/release-source.json)"
+          METAL_SHA256="$(jq -r .metal_agent.sha256 release/release-source.json)"
+          METAL_BYTES="$(jq -r .metal_agent.bytes release/release-source.json)"
+          METAL_SIGNER="$(jq -r .metal_agent.signer_identity_regexp release/release-source.json)"
+          curl -fsSL --retry 4 -o "$METAL_ARTIFACT" "$METAL_URL"
+          curl -fsSL --retry 4 -o "$METAL_ARTIFACT.sigstore.json" "$METAL_SIGNATURE_URL"
+          echo "$METAL_SHA256  $METAL_ARTIFACT" | sha256sum -c -
+          test "$(stat -c %s "$METAL_ARTIFACT")" = "$METAL_BYTES"
+          cosign verify-blob \
+            --bundle "$METAL_ARTIFACT.sigstore.json" \
+            --certificate-identity-regexp "$METAL_SIGNER" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$METAL_ARTIFACT"
+          while IFS= read -r dependency; do
+            name="$(jq -r '.key' <<<"$dependency")"
+            artifact="$(jq -r '.value.artifact' <<<"$dependency")"
+            url="$(jq -r '.value.url' <<<"$dependency")"
+            sha256="$(jq -r '.value.sha256' <<<"$dependency")"
+            bytes="$(jq -r '.value.bytes' <<<"$dependency")"
+            signature_url="$(jq -r '.value.signature_url // empty' <<<"$dependency")"
+            signer="$(jq -r '.value.signer_identity_regexp // empty' <<<"$dependency")"
+            curl -fsSL --retry 4 -o "$artifact" "$url"
+            echo "$sha256  $artifact" | sha256sum -c -
+            test "$(stat -c %s "$artifact")" = "$bytes"
+            if [[ -n "$signature_url" ]]; then
+              curl -fsSL --retry 4 -o "$artifact.sigstore.json" "$signature_url"
+              cosign verify-blob \
+                --bundle "$artifact.sigstore.json" \
+                --certificate-identity-regexp "$signer" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                "$artifact"
+            fi
+            echo "verified installer dependency $name $artifact"
+          done < <(jq -c '.installer_dependencies["metal-arm64"] | to_entries[]' release/release-source.json)
       - name: Generate release manifest
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -290,12 +311,15 @@ jobs:
       - name: Vendor pinned EmbeddingGemma Metal executable
         run: |
           set -euo pipefail
+          EMBEDDING_ARTIFACT="$(jq -r .embedding_runtime.artifact release/release-source.json)"
+          EMBEDDING_URL="$(jq -r .embedding_runtime.url release/release-source.json)"
+          EMBEDDING_SHA256="$(jq -r .embedding_runtime.sha256 release/release-source.json)"
+          EMBEDDING_BYTES="$(jq -r .embedding_runtime.bytes release/release-source.json)"
           mkdir -p deploy/assets
-          curl -fsSL --retry 4 \
-            -o deploy/assets/embeddinggemma-darwin-arm64-metal \
-            https://github.com/QuixiAI/embeddinggemma.c/releases/download/v0.3.1/embeddinggemma-darwin-arm64-metal
-          echo 'c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5  deploy/assets/embeddinggemma-darwin-arm64-metal' | sha256sum -c -
-          chmod 755 deploy/assets/embeddinggemma-darwin-arm64-metal
+          curl -fsSL --retry 4 -o "deploy/assets/$EMBEDDING_ARTIFACT" "$EMBEDDING_URL"
+          echo "$EMBEDDING_SHA256  deploy/assets/$EMBEDDING_ARTIFACT" | sha256sum -c -
+          test "$(stat -c %s "deploy/assets/$EMBEDDING_ARTIFACT")" = "$EMBEDDING_BYTES"
+          chmod 755 "deploy/assets/$EMBEDDING_ARTIFACT"
       - name: Build host lifecycle binaries
         run: |
           set -euo pipefail

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Root systemd coordinator for the native Ubuntu package. It exists because
+# apt/dpkg locks cannot be reacquired from a package maintainer script.
+set -Eeuo pipefail
+
+PACKAGE_ROOT="${SOVEREIGN_PACKAGE_ROOT:-/usr/local/share/sovereign-stack}"
+STATE_DIR="${SOVEREIGN_PACKAGE_STATE_DIR:-/var/lib/sovereign-stack}"
+UNIT_NAME="${SOVEREIGN_PACKAGE_UNIT:-sovereign-stack-package-install.service}"
+LOG_DIR="${SOVEREIGN_PACKAGE_LOG_DIR:-/var/log/sovereign-stack}"
+OWNER_FILE="$STATE_DIR/package-owner"
+[[ -r "$OWNER_FILE" ]] || { echo "error: package install owner is missing" >&2; exit 1; }
+INSTALL_USER="$(<"$OWNER_FILE")"
+[[ "$INSTALL_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*[$]?$ ]] || {
+  echo "error: package install owner is invalid" >&2
+  exit 1
+}
+INSTALL_UID="$(id -u "$INSTALL_USER")"
+INSTALL_HOME="$(getent passwd "$INSTALL_USER" | cut -d: -f6)"
+[[ "$INSTALL_UID" -ge 1000 && "$INSTALL_UID" -lt 60000 && -d "$INSTALL_HOME" ]] || {
+  echo "error: package install owner is not an ordinary login user" >&2
+  exit 1
+}
+
+VERSION="$(<"$PACKAGE_ROOT/VERSION")"
+# Keep root-service output out of the user-writable home to avoid privileged
+# symlink races. The same stream is available through the systemd journal.
+install -d -m 700 "$LOG_DIR"
+install -m 600 /dev/null "$LOG_DIR/install.log"
+
+echo "Preparing the Ubuntu, Docker, and NVIDIA host dependencies..." | tee -a "$LOG_DIR/install.log"
+PROVISION_RESULT_LOG="$(mktemp /tmp/sovereign-package-provision.XXXXXX)"
+trap 'rm -f "$PROVISION_RESULT_LOG"' EXIT
+/bin/bash "$PACKAGE_ROOT/provision-ubuntu.sh" --owner "$INSTALL_USER" 2>&1 | \
+  tee -a "$LOG_DIR/install.log" "$PROVISION_RESULT_LOG"
+PROVISION_RESULT="$(sed -n 's/^result_file=//p' "$PROVISION_RESULT_LOG" | tail -n 1)"
+[[ -n "$PROVISION_RESULT" && -r "$PROVISION_RESULT" ]] || {
+  echo "error: Ubuntu provisioning completed without a readable resume result" >&2
+  exit 1
+}
+
+echo "Installing SovereignStack as $INSTALL_USER..." | tee -a "$LOG_DIR/install.log"
+set +e
+runuser -u "$INSTALL_USER" -- env \
+  HOME="$INSTALL_HOME" \
+  SOVEREIGN_VERSION="$VERSION" \
+  SOVEREIGN_ACCESS_MODE=desktop \
+  SOVEREIGN_UBUNTU_PROVISION_RESULT="$PROVISION_RESULT" \
+  SOVEREIGN_AUTO_REBOOT=0 \
+  /bin/bash "$PACKAGE_ROOT/install.sh" 2>&1 | tee -a "$LOG_DIR/install.log"
+INSTALL_STATUS="${PIPESTATUS[0]}"
+set -e
+
+if (( INSTALL_STATUS == 194 )); then
+  echo "Host setup is complete. Reboot once; SovereignStack will resume automatically." | \
+    tee -a "$LOG_DIR/install.log"
+  systemctl disable "$UNIT_NAME" >/dev/null 2>&1 || true
+  exit 0
+fi
+(( INSTALL_STATUS == 0 )) || exit "$INSTALL_STATUS"
+systemctl disable "$UNIT_NAME" >/dev/null 2>&1 || true
+echo "SovereignStack package installation completed successfully." | tee -a "$LOG_DIR/install.log"

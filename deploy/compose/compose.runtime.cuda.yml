@@ -7,7 +7,7 @@ services:
     environment:
       SOVEREIGN_PROFILE: cuda-x86_64
       VLLM_BACKEND: cuda
-      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_VISIBLE_DEVICES: ${SOVEREIGN_CUDA_GPU_INDEX:-all}
 
   # Embeddings have an independent failure and release boundary. The model is
   # mounted read-only and the service is reachable only on the private network.
@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     gpus: all
     environment:
-      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_VISIBLE_DEVICES: ${SOVEREIGN_CUDA_GPU_INDEX:-all}
     volumes:
       - ./models/embeddinggemma:/models:ro
     expose:

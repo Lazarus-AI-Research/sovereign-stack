@@ -2,23 +2,54 @@
 
 SovereignStack v0.1 supports two certified host profiles:
 
-- Apple Silicon Mac with at least 32 GB unified memory, Docker Desktop, and 20 GB free disk (60 GB or more is recommended when keeping model weights).
-- Ubuntu 24.04 x86_64 with one NVIDIA GPU exposing at least 24 GB VRAM, Docker Engine with Compose v2, the NVIDIA driver, and NVIDIA Container Toolkit.
+- Apple Silicon Mac with at least 32 GB unified memory and 20 GB free disk
+  (60 GB or more is recommended when keeping model weights). Docker Desktop,
+  Homebrew, Colima, Lima, Docker CLI, and Compose are not prerequisites: when
+  no compatible engine is available, the installer provisions its own pinned
+  Colima toolchain and private VM.
+- Ubuntu 24.04 x86_64 with an NVIDIA display or 3D controller and at least one
+  GPU exposing 24 GB VRAM. The NVIDIA driver, Docker Engine, Compose, and
+  NVIDIA Container Toolkit are installed and configured by the installer
+  after one administrator approval; they are not prerequisites.
 
-The installer manages SovereignStack only. It does not modify host drivers,
-Docker, or operating-system packages.
+On macOS the installer owns only its private `sovereign` Colima profile and
+never changes the user's active Docker context. Existing compatible engines
+are reused without being stopped, upgraded, reconfigured, or removed.
 
-## One-command install
+On Ubuntu, PCI hardware is detected before a driver exists. Driver and
+container packages come from authenticated Ubuntu, Docker, and NVIDIA
+repositories whose signing-key fingerprints are checked before trust is
+installed. A driver or Docker-group change records a private resume journal,
+enables a narrowly scoped user systemd unit, and continues automatically after
+the required reboot. Host Docker packages are preserved during uninstall.
+
+## One-launch installation
+
+SovereignStack defines one-click installation as reaching a working portal
+from a supported clean operating system with one launch action, no developer
+tools, and no manual dependency setup. On a desktop that action is opening the
+native package; on a headless Ubuntu server it is one copy-and-paste command.
+Administrator approval and an explained, automatically resumed reboot are
+part of normal operating-system administration, not additional installation
+prerequisites. See the
+[one-click installer execution plan](one-click-installer-execution-plan.md)
+for the complete product contract.
 
 Tagged releases publish an Apple Silicon `.pkg` and an Ubuntu AMD64 `.deb`.
 When Apple credentials are configured, the macOS package is Developer ID
 signed, notarized, and stapled. Otherwise its filename ends in `-unsigned.pkg`
 and macOS displays the expected Gatekeeper warnings. Opening either package
 installs a small native bootstrap and starts the same signed, version-pinned
-installation in the background; the portal opens as soon as the control plane
-is ready. Every native package has detached Sigstore and SHA-256 verification
-artifacts on the release page, including the explicitly unsigned macOS package.
-The default local portal address is <http://127.0.0.1:54854/>.
+installation. On macOS, package installation opens a Terminal window for the
+signed-in user, keeps bootstrap output visible, and appends the same output to
+the owner-private `~/Library/Logs/SovereignStack/install.log`. After dpkg
+releases its package lock, the Ubuntu package uses a persistent systemd
+coordinator and prints one `journalctl` command for live progress and durable
+errors; it never hides failure in a detached `nohup` job. It resumes after a
+required reboot. The portal opens as soon as the control plane is ready. Every
+native package has detached Sigstore and SHA-256 verification artifacts on the
+release page, including the explicitly unsigned macOS package. The default
+local portal address is <http://127.0.0.1:54854/>.
 
 For the stable release:
 
@@ -33,6 +64,17 @@ curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack
   | SOVEREIGN_VERSION=0.1.0-rc.6 bash
 ```
 
+For headless automation, pass `--json`. Stdout then contains only JSON Lines
+matching `schemas/installer-event.schema.json`; human progress and invoked-tool
+output use stderr. The latest event and resumable journal are written
+atomically to `~/.sovereign/state/install-event.json` and
+`~/.sovereign/state/install-journal.env`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lazarus-AI-Research/sovereign-stack/v0.1.0/deploy/scripts/install.sh \
+  | bash -s -- --json
+```
+
 The bootstrap downloads the versioned release archive, verifies its SHA-256
 checksum and Sigstore identity, detects the certified profile, generates
 owner-only appliance secrets, pulls digest-pinned images from the signed
@@ -41,6 +83,13 @@ provisions the generation runtime and embedding service while **Activity**
 reports progress. A Hugging Face token is only needed
 when a configured repository requires one: set `HF_TOKEN` in the installer
 environment.
+
+CUDA offline bundles currently contain all application images and optional
+models, but not the kernel-specific Ubuntu/NVIDIA package closure. A fresh
+Ubuntu host therefore needs network access for its first host-provisioning
+stage; after a completed online install, ordinary `down`/`up` and bundle image
+loading remain offline. The installer fails closed instead of reaching the
+network when a fresh CUDA install is explicitly given an offline bundle.
 
 The appliance is installed under `~/.sovereign`; the management command is
 placed at `~/.local/bin/sovereign`. Add that directory to `PATH` if needed.
@@ -67,6 +116,7 @@ sovereign status
 sovereign open
 sovereign logs -f sovereign-runtime
 sovereign smoke
+sovereign repair
 sovereign down
 sovereign up
 ```
@@ -84,8 +134,11 @@ implicit database-volume takeover.
 
 ## Removal
 
-`sovereign uninstall` stops services and removes release code while preserving
-data and Docker volumes. Permanent deletion deliberately requires both flags:
+`sovereign uninstall` stops services and an installer-owned Colima VM, then
+removes release code while preserving appliance data, Docker volumes, and the
+managed VM. `sovereign uninstall --purge` prints every owned path, volume, and
+managed VM without deleting anything. After reviewing that preview, permanent
+deletion deliberately requires both flags:
 
 ```bash
 sovereign uninstall --purge --yes

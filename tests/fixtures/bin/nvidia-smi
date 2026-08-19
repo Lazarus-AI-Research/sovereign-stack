@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
+if [[ "${SOVEREIGN_TEST_NVIDIA_READY:-1}" != 1 ]]; then
+  exit 9
+fi
+if [[ " ${*:-} " == *" -L " ]]; then
+  echo 'GPU 0: NVIDIA Test GPU (UUID: GPU-test)'
+  exit 0
+fi
+if [[ " $* " == *" --query-gpu=index,name,memory.total "* ]]; then
+  echo '0, NVIDIA Test GPU, 24576'
+  exit 0
+fi
 if [[ " $* " == *" --query-gpu=memory.total "* ]]; then
   echo 24576
+  exit 0
+fi
+if [[ " $* " == *" --query-gpu=name "* ]]; then
+  echo 'NVIDIA Test GPU'
   exit 0
 fi
 exit 2

@@ -18,15 +18,49 @@ python3 "$ROOT/release/generate_manifest.py" \
   --source "$ROOT/release/release-source.json" \
   --digest-dir "$TEST_ROOT/digests" \
   --stack-commit 0000000000000000000000000000000000000000 \
+  --schema-dir "$ROOT/schemas" \
   --output "$TEST_ROOT/generated/manifest.json" \
   --image-lock-output "$TEST_ROOT/generated/images.env"
 
-python3 - "$TEST_ROOT/generated/manifest.json" "$TEST_ROOT/generated/images.env" <<'PY'
+python3 - "$TEST_ROOT/generated/manifest.json" "$TEST_ROOT/generated/images.env" \
+  "$ROOT/schemas/release-manifest.schema.json" <<'PY'
 import json
 import sys
 
+from jsonschema import Draft202012Validator, FormatChecker
+
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+schema = json.load(open(sys.argv[3], encoding="utf-8"))
+Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 runtime_version = manifest["runtime_version"]
+assert manifest["schema_version"] == "1.3"
+metal = manifest["metal_agent"]
+assert metal["version"] == "0.1.0-rc.4"
+assert metal["version"] != manifest["version"]
+assert metal["artifact"] == "sovereign-metal-agent-0.1.0-rc.4-arm64.tar.gz"
+assert metal["url"].endswith("/v0.1.0-rc.4/" + metal["artifact"])
+assert metal["signature_url"] == metal["url"] + ".sigstore.json"
+assert metal["sha256"] == "ab8eabebac94f719325ce57f901962544ad068debc7b9f274334303b2fda393d"
+assert metal["bytes"] == 74820904
+assert manifest["embedding_runtime"]["version"] == "0.3.1"
+dependencies = manifest["installer_dependencies"]["metal-arm64"]
+assert set(dependencies) == {
+    "cosign", "colima", "colima_disk_image", "lima", "docker_cli", "docker_compose"
+}
+assert dependencies["colima"]["version"] == "0.10.3"
+assert dependencies["colima_disk_image"]["sha256"] == "1fc0354f4f99734ce3886628cc7af8b0437c1a1d391b126bd09cba0df35ee53f"
+assert dependencies["colima_disk_image"]["bytes"] == 332354401
+assert dependencies["cosign"]["bytes"] == 139051394
+assert dependencies["docker_cli"]["version"] == "29.7.2"
+assert dependencies["docker_compose"]["signature_url"].endswith(".sigstore.json")
+assert manifest["engine_probe"]["image"].endswith("@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d")
+for dependency in dependencies.values():
+    assert len(dependency["sha256"]) == 64
+    assert dependency["bytes"] > 0
+assert {schema["name"] for schema in manifest["schemas"]} >= {
+    "installer-event.schema.json", "release-manifest.schema.json",
+    "runtime-config.schema.json"
+}
 assets = {asset["name"]: asset for asset in manifest["assets"]}
 assert assets["embeddinggemma-darwin-arm64-metal"]["sha256"] == "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5"
 images = {image["name"]: image for image in manifest["images"] if image["first_party"]}
@@ -64,6 +98,7 @@ python3 "$ROOT/release/generate_manifest.py" \
   --source "$TEST_ROOT/legacy-source.json" \
   --digest-dir "$TEST_ROOT/digests" \
   --stack-commit 0000000000000000000000000000000000000000 \
+  --schema-dir "$ROOT/schemas" \
   --output "$TEST_ROOT/generated/legacy-manifest.json"
 python3 - "$TEST_ROOT/generated/legacy-manifest.json" <<'PY'
 import json
@@ -104,6 +139,7 @@ for profile in metal-arm64 cuda-x86_64; do
       "$home/compose.yml"
   done
   if [[ "$profile" == cuda-x86_64 ]]; then
+    grep -qx 'SOVEREIGN_CUDA_GPU_INDEX=' "$home/.env"
     grep -Eq '^SOVEREIGN_EMBEDDINGS_IMAGE=ghcr.io/lazarus-ai-research/[^@]+@sha256:[0-9a-f]{64}$' "$home/.env"
     grep -Eq 'image: ghcr.io/lazarus-ai-research/sovereign-embeddings:[^ ]+@sha256:[0-9a-f]{64}$' \
       "$home/compose.yml"
@@ -111,6 +147,15 @@ for profile in metal-arm64 cuda-x86_64; do
     grep -qx 'SOVEREIGN_EMBEDDINGS_IMAGE=' "$home/.env"
   fi
 done
+
+# Only the required OpenAI-compatible operations proxy to LiteLLM. A wildcard
+# here would also expose its management API and administration UI.
+grep -q '@scoped_openai path /api/openai/v1/models /api/openai/v1/chat/completions /api/openai/v1/embeddings' \
+  "$ROOT/deploy/config/caddy/Caddyfile"
+grep -A3 'handle @scoped_openai' "$ROOT/deploy/config/caddy/Caddyfile" | \
+  grep -q 'reverse_proxy sovereign-gateway:4000'
+! grep -Fq 'handle_path /api/openai/*' "$ROOT/deploy/config/caddy/Caddyfile"
+grep -A2 'handle /api/openai/\*' "$ROOT/deploy/config/caddy/Caddyfile" | grep -q 'respond "not found" 404'
 
 mv "$TEST_ROOT/release-root/release/images.env" "$TEST_ROOT/release-root/release/images.env.saved"
 if SOVEREIGN_HOME="$TEST_ROOT/missing-lock" \

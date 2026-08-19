@@ -14,9 +14,9 @@ before it creates the appliance archive.
    package version and tag independently.
 3. Set `release/release-source.json`'s `runtime_version` and `runtime_commit` to
    the qualified immutable Runtime release.
-4. Confirm all commits have only
-   `Eric Hartford <eric.hartford@lazarusai.com>` as author and contain no
-   `Co-Authored-By` trailers.
+4. Confirm every commit uses the GitHub identity of the human who owns and
+   directs the work as its sole author and committer, with no co-author,
+   co-contributor, or AI attribution trailers.
 5. Confirm both worktrees are clean and every release artifact is licensed.
 
 ## Publish

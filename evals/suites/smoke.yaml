@@ -16,7 +16,7 @@ checks:
 
   - type: chat-completion
     id: chat-direct
-    params: { target: runtime }
+    params: { target: runtime, max_tokens: 512, expected: sovereign }
   - type: chat-streaming
     id: streaming-direct
     params: { target: runtime }
@@ -26,7 +26,7 @@ checks:
 
   - type: chat-completion
     id: chat-via-gateway
-    params: { target: gateway }
+    params: { target: gateway, max_tokens: 512, expected: sovereign }
   - type: text-embedding
     id: embedding-via-gateway
     params: { target: gateway }

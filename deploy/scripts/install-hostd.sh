@@ -5,6 +5,8 @@ set -Eeuo pipefail
 SOVEREIGN_HOME="${SOVEREIGN_HOME:-$HOME/.sovereign}"
 HOSTD_BINARY="${SOVEREIGN_HOSTD_BINARY:?set SOVEREIGN_HOSTD_BINARY}"
 CLI_BINARY="${SOVEREIGN_CLI_BINARY:?set SOVEREIGN_CLI_BINARY}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHD_HELPER="$SCRIPT_DIR/launchd-service.sh"
 
 [[ -x "$HOSTD_BINARY" && -x "$CLI_BINARY" ]] || {
   echo "error: sovereign-hostd and sovereign must be executable" >&2
@@ -18,6 +20,7 @@ CLI_BINARY="${SOVEREIGN_CLI_BINARY:?set SOVEREIGN_CLI_BINARY}"
 mkdir -p "$SOVEREIGN_HOME/logs/hostd"
 
 if [[ "$(uname -s)" == Darwin ]]; then
+  [[ -x "$LAUNCHD_HELPER" ]] || { echo "error: launchd service helper is missing" >&2; exit 1; }
   LABEL="com.lazarus.sovereign-hostd"
   PLIST_DIR="$HOME/Library/LaunchAgents"
   PLIST="$PLIST_DIR/$LABEL.plist"
@@ -40,11 +43,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
   <key>StandardErrorPath</key><string>$(escape "$SOVEREIGN_HOME/logs/hostd/stderr.log")</string>
 </dict></plist>
 EOF
-  plutil -lint "$TEMP" >/dev/null
-  install -m 600 "$TEMP" "$PLIST"
-  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$PLIST"
-  launchctl kickstart -k "gui/$(id -u)/$LABEL"
+  "$LAUNCHD_HELPER" install "$LABEL" "$TEMP" "$PLIST" http://127.0.0.1:9191/host/v1/health
 elif [[ "$(uname -s)" == Linux ]]; then
   UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   UNIT="$UNIT_DIR/sovereign-hostd.service"

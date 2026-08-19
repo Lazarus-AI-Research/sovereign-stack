@@ -1,8 +1,85 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.3",
   "version": "0.1.0-rc.6",
   "runtime_version": "0.1.0-rc.4",
   "runtime_commit": "89762bd5ef7ea142e129ef7ab0c9d5a03adb63a5",
+  "metal_agent": {
+    "version": "0.1.0-rc.4",
+    "repository": "Lazarus-AI-Research/sovereign-vllm",
+    "artifact": "sovereign-metal-agent-0.1.0-rc.4-arm64.tar.gz",
+    "url": "https://github.com/Lazarus-AI-Research/sovereign-vllm/releases/download/v0.1.0-rc.4/sovereign-metal-agent-0.1.0-rc.4-arm64.tar.gz",
+    "signature_url": "https://github.com/Lazarus-AI-Research/sovereign-vllm/releases/download/v0.1.0-rc.4/sovereign-metal-agent-0.1.0-rc.4-arm64.tar.gz.sigstore.json",
+    "sha256": "ab8eabebac94f719325ce57f901962544ad068debc7b9f274334303b2fda393d",
+    "bytes": 74820904,
+    "signer_identity_regexp": "^https://github.com/Lazarus-AI-Research/sovereign-vllm/.github/workflows/release.yml@refs/tags/v"
+  },
+  "embedding_runtime": {
+    "version": "0.3.1",
+    "artifact": "embeddinggemma-darwin-arm64-metal",
+    "url": "https://github.com/QuixiAI/embeddinggemma.c/releases/download/v0.3.1/embeddinggemma-darwin-arm64-metal",
+    "sha256": "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5",
+    "bytes": 509680
+  },
+  "engine_probe": {
+    "image": "caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d",
+    "container_port": 80,
+    "minimum_api_version": "1.41",
+    "minimum_free_kib": 20971520
+  },
+  "installer_dependencies": {
+    "metal-arm64": {
+      "cosign": {
+        "version": "3.1.1",
+        "artifact": "cosign-darwin-arm64",
+        "url": "https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-darwin-arm64",
+        "sha256": "94b42a9e697be95675f6160ab031a9a5f1ec1e646d6f648d7b2f5cd59ececbc5",
+        "bytes": 139051394,
+        "format": "executable"
+      },
+      "colima": {
+        "version": "0.10.3",
+        "artifact": "colima-Darwin-arm64",
+        "url": "https://github.com/abiosoft/colima/releases/download/v0.10.3/colima-Darwin-arm64",
+        "sha256": "980ad8bf61a4ca370243f4cb41401a61276dcd2c2502bee7b9b86f9250169f34",
+        "bytes": 15656320,
+        "format": "executable"
+      },
+      "colima_disk_image": {
+        "version": "0.10.4",
+        "artifact": "ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz",
+        "url": "https://github.com/abiosoft/colima-core/releases/download/v0.10.4/ubuntu-24.04-minimal-cloudimg-arm64-docker.raw.gz",
+        "sha256": "1fc0354f4f99734ce3886628cc7af8b0437c1a1d391b126bd09cba0df35ee53f",
+        "bytes": 332354401,
+        "format": "raw.gz"
+      },
+      "lima": {
+        "version": "2.2.0",
+        "artifact": "lima-2.2.0-Darwin-arm64.tar.gz",
+        "url": "https://github.com/lima-vm/lima/releases/download/v2.2.0/lima-2.2.0-Darwin-arm64.tar.gz",
+        "sha256": "bbdef91774885a0d05f7b048c4eb89ae2bcf3a0c252ae7ca7934e63df76d93c3",
+        "bytes": 37586365,
+        "format": "tar.gz"
+      },
+      "docker_cli": {
+        "version": "29.7.2",
+        "artifact": "docker-29.7.2.tgz",
+        "url": "https://download.docker.com/mac/static/stable/aarch64/docker-29.7.2.tgz",
+        "sha256": "b8683ed19d1f06048a496f9b8429e2c71d0b088d475b7487c054ea3666c02a3c",
+        "bytes": 18920558,
+        "format": "tar.gz"
+      },
+      "docker_compose": {
+        "version": "5.5.0",
+        "artifact": "docker-compose-darwin-aarch64",
+        "url": "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-darwin-aarch64",
+        "signature_url": "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-darwin-aarch64.sigstore.json",
+        "signer_identity_regexp": "^https://github.com/docker/github-builder/.github/workflows/bake.yml@a492c6d04fd3315f67230809b44d60cc0acd50b3$",
+        "sha256": "6777710e5a5db5709e5f4b5985844e74b73cc1a6123e3a6690b6ababf2deaf51",
+        "bytes": 46920594,
+        "format": "executable"
+      }
+    }
+  },
   "supported_profiles": ["cuda-x86_64", "metal-arm64"],
   "third_party_images": [
     {"name": "caddy", "reference": "caddy@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d"},
@@ -17,8 +94,13 @@
   ],
   "models": [
     {"id": "assistant-large-cuda", "role": "generation", "repository": "google/gemma-4-E2B-it", "revision": "9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf", "profiles": ["cuda-x86_64"], "modalities": ["text"]},
-    {"id": "assistant-large-metal", "role": "generation", "repository": "google/gemma-4-E2B-it-qat-q4_0-gguf", "revision": "69536a21d70340464240401ba38223d805f6a709", "profiles": ["metal-arm64"], "modalities": ["text"]},
-    {"id": "embedding-gemma-default", "role": "embedding", "repository": "ggml-org/embeddinggemma-300M-qat-q4_0-GGUF", "revision": "8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73", "artifact": "embeddinggemma-300M-qat-Q4_0.gguf", "sha256": "50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26", "profiles": ["cuda-x86_64", "metal-arm64"], "modalities": ["text"]}
+    {"id": "assistant-large-metal", "role": "generation", "repository": "google/gemma-4-E2B-it-qat-q4_0-gguf", "revision": "69536a21d70340464240401ba38223d805f6a709", "profiles": ["metal-arm64"], "modalities": ["text"], "artifacts": [
+      {"name": "gemma-4-E2B_q4_0-it.gguf", "sha256": "3646b4c147cd235a44d91df1546d3b7d8e29b547dbe4e1f80856419aa455e6fd", "bytes": 3349514112},
+      {"name": "gemma-4-E2B-it-mmproj.gguf", "sha256": "58c187648007cab392bd5678b87e862c3e8794017deb945feea2cf256195e96a", "bytes": 986833312}
+    ]},
+    {"id": "embedding-gemma-default", "role": "embedding", "repository": "ggml-org/embeddinggemma-300M-qat-q4_0-GGUF", "revision": "8dd0ca2a66a8f14470acb0e2a71f801afbc5fb73", "artifact": "embeddinggemma-300M-qat-Q4_0.gguf", "sha256": "50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26", "profiles": ["cuda-x86_64", "metal-arm64"], "modalities": ["text"], "artifacts": [
+      {"name": "embeddinggemma-300M-qat-Q4_0.gguf", "sha256": "50d28e22432a148f6f8a86eab3700f92add5d1f54baf7790675a2a4dadbccf26", "bytes": 277852192}
+    ]}
   ],
   "assets": [
     {"name": "embeddinggemma-darwin-arm64-metal", "sha256": "c110806fcb22514c43bb237865340fec94d14d8de8466eeed7b5d288c58ce8b5", "bytes": 509680}

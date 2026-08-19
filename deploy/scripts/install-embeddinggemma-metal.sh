@@ -9,6 +9,9 @@ MODEL="${EMBEDDINGGEMMA_MODEL:?set EMBEDDINGGEMMA_MODEL}"
 [[ -x "$BINARY" ]] || { echo "error: embeddinggemma binary is not executable: $BINARY" >&2; exit 1; }
 [[ -f "$MODEL" ]] || { echo "error: embeddinggemma model is missing: $MODEL" >&2; exit 1; }
 command -v launchctl >/dev/null 2>&1 || { echo "error: launchctl is required" >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHD_HELPER="$SCRIPT_DIR/launchd-service.sh"
+[[ -x "$LAUNCHD_HELPER" ]] || { echo "error: launchd service helper is missing" >&2; exit 1; }
 
 case "$SOVEREIGN_HOME$BINARY$MODEL" in
   *$'\n'*|*$'\r'*) echo "error: embeddinggemma paths must not contain newlines" >&2; exit 1 ;;
@@ -74,9 +77,5 @@ cat > "$TMP_PLIST" <<EOF
 </plist>
 EOF
 
-command -v plutil >/dev/null 2>&1 && plutil -lint "$TMP_PLIST" >/dev/null
-install -m 600 "$TMP_PLIST" "$PLIST"
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl kickstart -k "gui/$(id -u)/$LABEL"
+"$LAUNCHD_HELPER" install "$LABEL" "$TMP_PLIST" "$PLIST" http://127.0.0.1:42666/healthz
 printf 'installed host embedding service %s\n' "$LABEL"

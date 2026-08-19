@@ -1,0 +1,17 @@
+[Unit]
+Description=Complete SovereignStack host and appliance installation
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/var/lib/sovereign-stack/package-owner
+StartLimitIntervalSec=900
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/sovereign-stack-package-install
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

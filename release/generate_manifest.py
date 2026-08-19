@@ -9,6 +9,7 @@ revisions come from release-source.json, which is reviewed with the code.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -36,6 +37,39 @@ def read_digest(path: Path) -> str:
     return value
 
 
+def checked_component(source: dict, name: str, *, signed: bool = False) -> dict:
+    component = dict(source.get(name) or {})
+    required = {"version", "artifact", "url", "sha256", "bytes"}
+    if signed:
+        required.update({"signature_url", "signer_identity_regexp"})
+    missing = sorted(required - component.keys())
+    if missing:
+        raise ValueError(f"release source {name} is missing: {', '.join(missing)}")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(component["sha256"])):
+        raise ValueError(f"release source {name} has an invalid sha256")
+    if not isinstance(component["bytes"], int) or component["bytes"] <= 0:
+        raise ValueError(f"release source {name} has an invalid byte size")
+    if not str(component["url"]).endswith("/" + str(component["artifact"])):
+        raise ValueError(f"release source {name} URL does not name its artifact")
+    if signed and component["signature_url"] != component["url"] + ".sigstore.json":
+        raise ValueError(f"release source {name} signature URL does not match its artifact")
+    return component
+
+
+def schema_inventory(root: Path) -> list[dict]:
+    result = []
+    for path in sorted(root.glob("*.json")):
+        raw = path.read_bytes()
+        result.append({
+            "name": path.name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        })
+    if not result:
+        raise ValueError(f"no JSON schemas found under {root}")
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=Path("release/release-source.json"))
@@ -43,9 +77,12 @@ def main() -> None:
     parser.add_argument("--stack-commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--image-lock-output", type=Path)
+    parser.add_argument("--schema-dir", type=Path, default=Path("schemas"))
     args = parser.parse_args()
 
     source = json.loads(args.source.read_text(encoding="utf-8"))
+    if source.get("schema_version") != "1.3":
+        raise ValueError("release source must use schema_version 1.3")
     if not COMMIT.fullmatch(args.stack_commit):
         raise ValueError("--stack-commit must be a full 40-character commit")
     if not COMMIT.fullmatch(source["runtime_commit"]):
@@ -92,10 +129,39 @@ def main() -> None:
             }
         )
 
-    model_fields = {"id", "repository", "revision", "profiles", "role", "artifact", "sha256", "modalities"}
+    metal_agent = checked_component(source, "metal_agent", signed=True)
+    embedding_runtime = checked_component(source, "embedding_runtime")
+    engine_probe = dict(source.get("engine_probe") or {})
+    required_probe_fields = {
+        "image", "container_port", "minimum_api_version", "minimum_free_kib"
+    }
+    if set(engine_probe) != required_probe_fields:
+        raise ValueError("release source must define the complete engine probe contract")
+    if not re.fullmatch(r"[A-Za-z0-9._/:@-]+@sha256:[0-9a-f]{64}", str(engine_probe["image"])):
+        raise ValueError("release source engine probe image must be digest pinned")
+    if not isinstance(engine_probe["container_port"], int) or not 1 <= engine_probe["container_port"] <= 65535:
+        raise ValueError("release source engine probe container port is invalid")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", str(engine_probe["minimum_api_version"])):
+        raise ValueError("release source engine probe API version is invalid")
+    if not isinstance(engine_probe["minimum_free_kib"], int) or engine_probe["minimum_free_kib"] < 1048576:
+        raise ValueError("release source engine probe free-space requirement is invalid")
+    installer_dependencies = source.get("installer_dependencies") or {}
+    metal_dependencies = installer_dependencies.get("metal-arm64") or {}
+    required_metal_dependencies = {
+        "cosign", "colima", "colima_disk_image", "lima", "docker_cli", "docker_compose"
+    }
+    if set(metal_dependencies) != required_metal_dependencies:
+        raise ValueError("release source must pin the complete metal-arm64 installer toolchain")
+    checked_dependencies = {}
+    for name in sorted(required_metal_dependencies):
+        dependency = checked_component(metal_dependencies, name, signed=name == "docker_compose")
+        if dependency.get("format") not in {"executable", "tar.gz", "raw.gz"}:
+            raise ValueError(f"release source installer dependency {name} has an invalid format")
+        checked_dependencies[name] = dependency
+    model_fields = {"id", "repository", "revision", "profiles", "role", "artifact", "artifacts", "sha256", "modalities"}
     models = [{key: value for key, value in model.items() if key in model_fields} for model in source["models"]]
     manifest = {
-        "schema_version": "1.0",
+        "schema_version": "1.3",
         "version": version,
         "stack_commit": args.stack_commit,
         "runtime_version": runtime_version,
@@ -104,6 +170,11 @@ def main() -> None:
         "supported_profiles": source["supported_profiles"],
         "images": images,
         "models": models,
+        "metal_agent": metal_agent,
+        "embedding_runtime": embedding_runtime,
+        "engine_probe": engine_probe,
+        "installer_dependencies": {"metal-arm64": checked_dependencies},
+        "schemas": schema_inventory(args.schema_dir),
         "assets": source.get("assets", []),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

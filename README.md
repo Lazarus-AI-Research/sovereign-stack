@@ -30,14 +30,15 @@ Release-candidate users should pin both the installer URL and
 
 | Profile | Host requirements | v0.1 capability |
 | --- | --- | --- |
-| `metal-arm64` | Apple Silicon Mac, 32 GB+ unified memory, Docker Desktop with Compose v2 | Text chat through a signed generation agent, plus text embeddings and pgvector RAG through a loopback-only Metal service |
-| `cuda-x86_64` | Ubuntu 24.04 x86_64, NVIDIA GPU with 24 GB+ VRAM, Docker Engine with Compose v2, NVIDIA driver, and NVIDIA Container Toolkit | Text chat, text embeddings, and pgvector RAG |
+| `metal-arm64` | Apple Silicon Mac, 32 GB+ unified memory | Text chat through a signed generation agent, plus text embeddings and pgvector RAG through a loopback-only Metal service |
+| `cuda-x86_64` | Ubuntu 24.04 x86_64, NVIDIA display/3D PCI device with a 24 GB+ GPU | Text chat, text embeddings, and pgvector RAG |
 
-Both profiles require `curl`, `tar`, `openssl`, a running Docker daemon, at
-least 20 GB free disk, and network access for the initial install. At least
-60 GB free disk is recommended when retaining model weights. The installer
-checks these prerequisites but never installs or changes Docker, GPU drivers,
-or operating-system packages.
+Both profiles require at least 20 GB free disk and network access for the
+initial online install. At least 60 GB free disk is recommended when retaining
+model weights. Docker, Compose, Colima, NVIDIA drivers, and NVIDIA Container
+Toolkit are provisioned when missing. Ubuntu asks once for administrator
+approval and resumes automatically after a required driver/group reboot; the
+appliance itself continues to run as the login user.
 
 See [hardware profiles](docs/hardware-profiles.md) for the exact support matrix.
 
@@ -48,13 +49,15 @@ a native one-click install. A filename ending in `-unsigned.pkg` means Apple
 credentials were not configured and macOS will display Gatekeeper warnings;
 the release page still provides its SHA-256 and Sigstore bundle. The signed
 shell path below remains the supported choice for headless servers and
-automation.
+automation. The Ubuntu package prints a `journalctl` command for its persistent
+post-package coordinator; installation and any reboot continuation remain
+inspectable rather than disappearing into a detached process.
 
 Run the same command on a supported Mac or CUDA host. The installer detects the
 profile, verifies the signed release, generates appliance secrets, pulls the
 exact digest-pinned images, and starts the portal immediately while models
 continue loading. It opens the one-time first-administrator setup page in the
-default browser and completes runtime smoke tests in the background.
+default browser, then completes runtime smoke tests before reporting success.
 The default local portal address is <http://127.0.0.1:54854/>.
 
 ```bash
@@ -455,9 +458,10 @@ sovereign uninstall --purge --yes
 
 - **`sovereign: command not found`** — add `~/.local/bin` to `PATH`, or invoke
   `~/.local/bin/sovereign` directly.
-- **Docker prerequisite failure** — start Docker and confirm
-  `docker info` and `docker compose version` both succeed as the installing
-  user.
+- **Ubuntu provisioning failure** — inspect
+  `~/.sovereign/state/install-journal.env`, confirm the host is Ubuntu 24.04
+  with a supported NVIDIA PCI device, then re-run the same installer. Completed
+  package and release stages are reconciled rather than discarded.
 - **Slow first start** — model and image downloads can be large. Check
   `sovereign status` and `sovereign logs -f sovereign-runtime` before retrying.
 - **Gated model download** — export a valid `HF_TOKEN`, then re-run the same

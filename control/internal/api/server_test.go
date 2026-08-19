@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,28 @@ import (
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/models"
 	"github.com/Lazarus-AI-Research/sovereign-stack/control/internal/runtime"
 )
+
+func fakeGateway(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /key/list", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"keys": []any{
+			map[string]any{"token": "hashed-key-id", "key_alias": "recursor", "models": []string{"assistant-large"}, "key": "not-a-customer-secret"},
+		}})
+	})
+	mux.HandleFunc("POST /key/generate", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"key": "sk-one-time", "key_name": "hashed-key-id", "key_alias": "recursor",
+			"models": []string{"assistant-large"}, "user_id": "internal-user",
+		})
+	})
+	mux.HandleFunc("POST /key/delete", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
 
 func fakeRuntime(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -174,6 +197,65 @@ func TestApplicationRegistryIsControlledAndRoleFiltered(t *testing.T) {
 	}
 	if len(body.Applications) != 1 || body.Applications[0]["id"] != "chat" {
 		t.Fatalf("unauthenticated test identity should receive member registry: %v", body.Applications)
+	}
+}
+
+func TestGatewayKeysAreNormalizedWithPublicBaseURL(t *testing.T) {
+	for _, path := range []string{
+		BasePath + "/gateway/keys", BasePath + "/gateway/usage", BasePath + "/gateway/budgets",
+	} {
+		if !adminOnlyPath(path) {
+			t.Fatalf("gateway administration path is not admin-only: %s", path)
+		}
+	}
+	server := &Server{Gateway: gateway.New(fakeGateway(t).URL, "master")}
+	handler := server.Handler()
+
+	create := httptest.NewRequest(http.MethodPost, "https://ai.example.test"+BasePath+"/gateway/keys",
+		bytes.NewBufferString(`{"key_alias":"recursor","models":["assistant-large"]}`))
+	create.Header.Set("Content-Type", "application/json")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create key: %d %s", created.Code, created.Body.String())
+	}
+	if !strings.Contains(created.Body.String(), `"secret":"sk-one-time"`) ||
+		!strings.Contains(created.Body.String(), `"base_url":"https://ai.example.test/api/openai/v1"`) {
+		t.Fatalf("normalized key response: %s", created.Body.String())
+	}
+	if created.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("key response cache control = %q", created.Header().Get("Cache-Control"))
+	}
+	for _, forbidden := range []string{"internal-user", "user_id"} {
+		if strings.Contains(created.Body.String(), forbidden) {
+			t.Fatalf("key response leaked %q: %s", forbidden, created.Body.String())
+		}
+	}
+
+	listed := httptest.NewRecorder()
+	handler.ServeHTTP(listed, httptest.NewRequest(http.MethodGet,
+		"https://ai.example.test"+BasePath+"/gateway/keys", nil))
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"id":"hashed-key-id"`) {
+		t.Fatalf("list keys: %d %s", listed.Code, listed.Body.String())
+	}
+	if strings.Contains(listed.Body.String(), "not-a-customer-secret") {
+		t.Fatalf("key list leaked implementation key field: %s", listed.Body.String())
+	}
+
+	deleted := httptest.NewRecorder()
+	handler.ServeHTTP(deleted, httptest.NewRequest(http.MethodDelete,
+		"https://ai.example.test"+BasePath+"/gateway/keys/hashed-key-id", nil))
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete key: %d %s", deleted.Code, deleted.Body.String())
+	}
+}
+
+func TestGatewayBaseURLRejectsUntrustedForwardedValues(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "https://ai.example.test/", nil)
+	r.Header.Set("X-Forwarded-Proto", "javascript")
+	r.Header.Set("X-Forwarded-Host", "evil.example/path")
+	if got := publicGatewayBaseURL(r); got != "https://ai.example.test/api/openai/v1" {
+		t.Fatalf("public gateway URL = %q", got)
 	}
 }
 

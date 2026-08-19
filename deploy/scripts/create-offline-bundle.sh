@@ -56,9 +56,13 @@ artifact_json() {
     "$(json_escape "$name")" "$(json_escape "$source")" "$hash" "$bytes"
 }
 
-for command in docker tar openssl sed awk; do need "$command"; done
-docker info >/dev/null 2>&1 || die "Docker is not running"
+for command in tar openssl sed awk; do need "$command"; done
 [[ -d "$CURRENT/deploy" && -f "$ENV_FILE" ]] || die "SovereignStack is not installed at $SOVEREIGN_HOME"
+ENGINE_LIB="$CURRENT/deploy/scripts/container-engine.sh"
+[[ -r "$ENGINE_LIB" ]] || die "container-engine support is missing from the installed release"
+# shellcheck source=container-engine.sh
+source "$ENGINE_LIB"
+sovereign_engine_require
 
 INSTALLED_PROFILE="$(<"$SOVEREIGN_HOME/state/profile")"
 PROFILE="${PROFILE:-$INSTALLED_PROFILE}"
@@ -83,6 +87,30 @@ printf '%s\n' "$PROFILE" > "$STAGE/profile"
 printf '%s\n' "$VERSION" > "$STAGE/version"
 tar -czf "$STAGE/release.tar.gz" -C "$CURRENT" .
 
+if [[ "$PROFILE" == metal-arm64 ]]; then
+  COMPONENT_MANIFEST="$CURRENT/release/manifest.json"
+  [[ -f "$COMPONENT_MANIFEST" ]] || COMPONENT_MANIFEST="$CURRENT/release/release-source.json"
+  [[ -f "$COMPONENT_MANIFEST" ]] || die "installed release has no component manifest"
+  DEPENDENCY_STAGE="$STAGE/installer-dependencies"
+  mkdir -p "$DEPENDENCY_STAGE"
+  SOVEREIGN_ENGINE_ARTIFACT_DIR="${SOVEREIGN_ENGINE_ARTIFACT_DIR:-$SOVEREIGN_HOME/cache/installer-dependencies}"
+  for component in cosign colima colima_disk_image lima docker_cli docker_compose; do
+    artifact="$(sovereign_engine_component_value "$COMPONENT_MANIFEST" "$component" artifact)"
+    [[ "$artifact" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]] || \
+      die "invalid $component artifact in the installed release manifest"
+    sovereign_engine_download_component "$COMPONENT_MANIFEST" "$component" \
+      "$DEPENDENCY_STAGE/$artifact" || die "could not stage installer dependency $component"
+    [[ "$component" != cosign ]] || {
+      chmod 700 "$DEPENDENCY_STAGE/$artifact"
+      SOVEREIGN_COSIGN="$DEPENDENCY_STAGE/$artifact"
+    }
+  done
+  COMPOSE_ARTIFACT="$(sovereign_engine_component_value "$COMPONENT_MANIFEST" docker_compose artifact)"
+  sovereign_engine_verify_component_signature "$COMPONENT_MANIFEST" docker_compose \
+    "$DEPENDENCY_STAGE/$COMPOSE_ARTIFACT" || \
+    die "could not verify the staged Docker Compose dependency"
+fi
+
 IMAGE_KEYS=(
   SOVEREIGN_CONTROL_IMAGE SOVEREIGN_DOCKER_PROXY_IMAGE SOVEREIGN_EVALS_IMAGE
   SOVEREIGN_WORKSPACE_IMAGE SOVEREIGN_RUNTIME_IMAGE CADDY_IMAGE LITELLM_IMAGE
@@ -95,12 +123,12 @@ IMAGE_JSON="$TMP_ROOT/images.jsonl"
 for key in "${IMAGE_KEYS[@]}"; do
   ref="$(env_value "$key")"
   [[ -n "$ref" ]] || die "$key is missing from $ENV_FILE"
-  if ! docker image inspect "$ref" >/dev/null 2>&1; then
+  if ! sovereign_engine_docker image inspect "$ref" >/dev/null 2>&1; then
     (( PULL_MISSING == 1 )) || die "image is not present locally: $ref"
     echo "pulling $ref" >&2
-    docker pull "$ref" >/dev/null
+    sovereign_engine_docker pull "$ref" >/dev/null
   fi
-  inspect="$(docker image inspect --format '{{.Id}} {{.Size}}' "$ref")"
+  inspect="$(sovereign_engine_docker image inspect --format '{{.Id}} {{.Size}}' "$ref")"
   image_hash="${inspect%% *}"; image_hash="${image_hash#sha256:}"
   image_bytes="${inspect##* }"
   artifact_json "$key" "$ref" "$image_hash" "$image_bytes" >> "$IMAGE_JSON"
@@ -109,7 +137,7 @@ for key in "${IMAGE_KEYS[@]}"; do
 done
 
 echo "saving ${#IMAGE_REFS[@]} images (this can take several minutes)..." >&2
-docker save -o "$STAGE/images.tar" "${IMAGE_REFS[@]}"
+sovereign_engine_docker save -o "$STAGE/images.tar" "${IMAGE_REFS[@]}"
 
 MODEL_JSON="$TMP_ROOT/models.jsonl"
 : > "$MODEL_JSON"
@@ -176,6 +204,11 @@ BUNDLE_ID="$VERSION-$PROFILE-$(openssl rand -hex 6)"
   else
     printf '  "includes_weights": false,\n'
   fi
+  if [[ -d "$STAGE/installer-dependencies" ]]; then
+    printf '  "includes_installer_dependencies": true,\n'
+  else
+    printf '  "includes_installer_dependencies": false,\n'
+  fi
   printf '  "images": [\n'
   awk 'NF {if (seen++) printf ",\n"; printf "    %s", $0} END {printf "\n"}' "$IMAGE_JSON"
   printf '  ],\n  "models": [\n'
@@ -188,6 +221,15 @@ BUNDLE_ID="$VERSION-$PROFILE-$(openssl rand -hex 6)"
     first=0
     printf '    %s' "$(artifact_json "$(basename "$file")" "$(basename "$file")" "$(sha256 "$file")" "$(file_size "$file")")"
   done
+  if [[ -d "$STAGE/installer-dependencies" ]]; then
+    for file in "$STAGE"/installer-dependencies/*; do
+      [[ -f "$file" ]] || continue
+      (( first == 1 )) || printf ',\n'
+      first=0
+      relative="installer-dependencies/$(basename "$file")"
+      printf '    %s' "$(artifact_json "$relative" "$relative" "$(sha256 "$file")" "$(file_size "$file")")"
+    done
+  fi
   printf '\n  ]\n}\n'
 } > "$STAGE/manifest.json"
 
