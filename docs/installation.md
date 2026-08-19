@@ -23,7 +23,17 @@ installed. A driver or Docker-group change records a private resume journal,
 enables a narrowly scoped user systemd unit, and continues automatically after
 the required reboot. Host Docker packages are preserved during uninstall.
 
-## One-command install
+## One-launch installation
+
+SovereignStack defines one-click installation as reaching a working portal
+from a supported clean operating system with one launch action, no developer
+tools, and no manual dependency setup. On a desktop that action is opening the
+native package; on a headless Ubuntu server it is one copy-and-paste command.
+Administrator approval and an explained, automatically resumed reboot are
+part of normal operating-system administration, not additional installation
+prerequisites. See the
+[one-click installer execution plan](one-click-installer-execution-plan.md)
+for the complete product contract.
 
 Tagged releases publish an Apple Silicon `.pkg` and an Ubuntu AMD64 `.deb`.
 When Apple credentials are configured, the macOS package is Developer ID

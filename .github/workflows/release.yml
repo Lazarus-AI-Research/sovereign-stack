@@ -33,7 +33,7 @@ jobs:
         run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
       - name: Shell and repository checks
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/macos/launch-install.command packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/build-package.sh packaging/macos/postinstall packaging/macos/launch-install.command packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
           chmod +x tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
           tests/scripts/macos-package-entrypoint.sh
@@ -107,21 +107,11 @@ jobs:
           fi
 
           VERSION="${GITHUB_REF_NAME#v}"
-          ROOT="$RUNNER_TEMP/sovereign-pkg"
-          mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/local/share/sovereign-stack"
-          cp deploy/scripts/install.sh "$ROOT/usr/local/share/sovereign-stack/install.sh"
-          cp packaging/macos/launch-install.command "$ROOT/usr/local/share/sovereign-stack/launch-install.command"
-          cp VERSION "$ROOT/usr/local/share/sovereign-stack/VERSION"
-          cp packaging/sovereign-install "$ROOT/usr/local/bin/sovereign-install"
-          chmod 755 "$ROOT/usr/local/bin/sovereign-install" \
-            "$ROOT/usr/local/share/sovereign-stack/install.sh" \
-            "$ROOT/usr/local/share/sovereign-stack/launch-install.command"
-          pkgbuild --root "$ROOT" --scripts packaging/macos \
-            --identifier ai.lazarus.sovereign-stack.installer --version "$VERSION" \
-            "$RUNNER_TEMP/SovereignStack-unsigned.pkg"
+          UNSIGNED_PACKAGE="$(packaging/macos/build-package.sh \
+            --version "$VERSION" --output-dir "$RUNNER_TEMP")"
 
           if (( signing_count == 0 )); then
-            cp "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64-unsigned.pkg"
+            cp "$UNSIGNED_PACKAGE" "SovereignStack-$VERSION-arm64-unsigned.pkg"
             {
               echo "### Unsigned macOS installer"
               echo "Apple credentials were not configured. Publishing the explicitly named unsigned package with SHA-256 and Sigstore verification artifacts."
@@ -138,7 +128,7 @@ jobs:
           security import "$RUNNER_TEMP/installer.p12" -P "$MACOS_INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           security list-keychain -d user -s "$KEYCHAIN"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          productsign --sign "$MACOS_INSTALLER_IDENTITY" "$RUNNER_TEMP/SovereignStack-unsigned.pkg" "SovereignStack-$VERSION-arm64.pkg"
+          productsign --sign "$MACOS_INSTALLER_IDENTITY" "$UNSIGNED_PACKAGE" "SovereignStack-$VERSION-arm64.pkg"
           xcrun notarytool submit "SovereignStack-$VERSION-arm64.pkg" \
             --apple-id "$APPLE_NOTARY_ID" --team-id "$APPLE_NOTARY_TEAM_ID" \
             --password "$APPLE_NOTARY_PASSWORD" --wait

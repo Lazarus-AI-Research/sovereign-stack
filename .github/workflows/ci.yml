@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   go:
     runs-on: ubuntu-latest
@@ -52,7 +55,7 @@ jobs:
           PY
       - name: Shipped scripts
         run: |
-          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/postinstall packaging/macos/launch-install.command packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
+          bash -n deploy/scripts/*.sh deploy/scripts/sovereign packaging/sovereign-install packaging/macos/build-package.sh packaging/macos/postinstall packaging/macos/launch-install.command packaging/linux/*.sh packaging/linux/postinst packaging/linux/prerm packaging/linux/package-install
           node --check workspace/sovereign/preload.js
           chmod +x tests/fixtures/bin/* tests/scripts/*.sh
           tests/scripts/release-artifacts.sh
@@ -70,6 +73,49 @@ jobs:
           grep -q 'usr/lib/systemd/system/sovereign-stack-package-install.service' "$RUNNER_TEMP/sovereign-deb-contents.txt"
       - name: Control UI
         run: npm ci --prefix control/web --no-fund --no-audit && npm run build --prefix control/web
+
+  candidate-ubuntu-installer:
+    if: github.event_name == 'pull_request'
+    needs: contracts-and-ui
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build candidate Ubuntu installer
+        run: |
+          mkdir -p "$RUNNER_TEMP/candidate"
+          packaging/linux/build-package.sh --output-dir "$RUNNER_TEMP/candidate"
+          PACKAGE="$RUNNER_TEMP/candidate/SovereignStack-$(cat VERSION)-amd64.deb"
+          (cd "$(dirname "$PACKAGE")" && sha256sum "$(basename "$PACKAGE")" > "$(basename "$PACKAGE").sha256")
+          dpkg-deb --info "$PACKAGE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-only-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-ubuntu-amd64
+          path: ${{ runner.temp }}/candidate/*
+          if-no-files-found: error
+          retention-days: 7
+
+  candidate-macos-installer:
+    if: github.event_name == 'pull_request'
+    needs: contracts-and-ui
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build candidate unsigned macOS installer
+        run: |
+          mkdir -p "$RUNNER_TEMP/candidate"
+          packaging/macos/build-package.sh --output-dir "$RUNNER_TEMP/candidate"
+          PACKAGE="$RUNNER_TEMP/candidate/SovereignStack-$(cat VERSION)-arm64-unsigned.pkg"
+          (cd "$(dirname "$PACKAGE")" && shasum -a 256 "$(basename "$PACKAGE")" > "$(basename "$PACKAGE").sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-only-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-macos-arm64-unsigned
+          path: ${{ runner.temp }}/candidate/*
+          if-no-files-found: error
+          retention-days: 7
 
   compose:
     runs-on: ubuntu-latest

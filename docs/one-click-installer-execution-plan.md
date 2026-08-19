@@ -20,6 +20,36 @@ The installer must not assume Git, Homebrew, Docker, Compose, Colima, Lima, Go,
 Python, Node.js, Rust, Pkl, model files, appliance configuration, or a prior
 SovereignStack release.
 
+### What "one-click" means
+
+"One-click" describes the installation outcome, not a literal mouse-click
+count:
+
+> From a supported clean operating system, one launch action reaches a working
+> SovereignStack portal without developer tools or manual dependency setup.
+
+The launch action follows the platform's normal administration model:
+
+- Apple Silicon macOS: open a signed and notarized `.pkg`;
+- Ubuntu NVIDIA desktop: open a `.deb` with the system package installer;
+- headless Ubuntu NVIDIA: run one copy-and-paste bootstrap command;
+- managed fleets: invoke the same bootstrap unattended or from an offline
+  bundle.
+
+An administrator approval, an informed hardware or storage choice, Secure Boot
+enrollment, or a required reboot does not violate this contract. The installer
+must explain the action, preserve its progress, and resume automatically when
+the operating system permits. Asking the user to install or operate Docker,
+Colima, Homebrew, drivers, language runtimes, or other implementation
+dependencies does violate it.
+
+The native packages are therefore the correct current product surfaces, not
+competing implementations. The macOS `.pkg`, Ubuntu `.deb`, and scriptable
+download path must remain thin entry points into one shared, resumable
+bootstrap engine. Homebrew and an APT repository may later provide additional
+distribution channels, but they must not become prerequisites or forks of the
+installation policy.
+
 The initial supported matrix is deliberately explicit:
 
 - Apple Silicon macOS 15 or newer with at least 32 GiB unified memory;
