@@ -17,15 +17,15 @@ Offline is the default. Cloud models, external search providers, remote support,
 ## Locked product decisions
 
 1. **The web application is canonical.** It must work on a local workstation, private LAN, and headless GPU server.
-2. **Desktop packages gain a small signed setup and launcher shell.** The shell provides guided prerequisites, lifecycle controls, notifications, file dialogs, deep links, and a window around the web application.
-3. **Chat becomes a first-party SovereignStack surface.** AnythingLLM may remain temporarily behind internal ingestion and retrieval APIs, but its UI is transitional.
+2. **The web application remains the product on desktop.** Native packages may perform host preflight, install and start the appliance, and open the browser, but SovereignStack does not require a separate native application shell.
+3. **Chat is a SovereignStack surface regardless of its implementation.** AnythingLLM may remain embedded when authentication, same-origin routing, branding, navigation, sizing, and lifecycle states feel native to the product.
 4. **Everyday navigation is Chat, Library, Models, and Activity.** Hardware, people, APIs, operations, and settings are owner/admin destinations.
 5. **The curated signed catalog is the default.** Arbitrary Hugging Face, ModelScope, local, and offline artifacts are an Advanced/Community path.
 6. **The first multi-GPU semantic is one active model across a selected homogeneous GPU group.** Multiple different models on different GPU groups require the later multi-deployment architecture.
 7. **vLLM remains the initial general serving path.** SlimServe is the first additional managed engine. SGLang and general llama.cpp selection follow.
 8. **ReAligned Qwen3.5 2B is the proposed lightweight first-chat model.** The reference artifact is BF16 unless a distinct FP16 release is created. The initial GGUF/SlimServe candidate is Q4, provisionally `Q4_K`.
 9. **A 16 GB Apple Silicon demo profile is required.** It must demonstrate the complete offline product path with ReAligned 2B and EmbeddingGemma even when speed and model quality are modest. It is a demo tier, distinct from certified production-oriented profiles.
-10. **The current evaluator beta may retain the AnythingLLM chat UI.** It must be described as transitional and must not delay initial evaluation.
+10. **The current evaluator may retain the embedded AnythingLLM chat UI.** Its credential/session handoff must work inside the management UI without direct-port access or manual key entry.
 11. **No empty UI promises.** Engine choices, protocols, hardware support, and modules appear only after their end-to-end path works.
 
 ## Release stages
@@ -50,11 +50,11 @@ Deliver first-class device placement and managed multi-GPU inference.
 
 **User outcome:** An administrator selects or accepts a recommended homogeneous GPU group, reviews the tensor-parallel plan, and deploys one active model across that group with an observable, recoverable lifecycle.
 
-### R3 — Multi-engine and owned application experience
+### R3 — Multi-engine and integrated application experience
 
-Integrate SlimServe, begin SGLang/llama.cpp adapters, replace the visible AnythingLLM experience, and broaden protocol compatibility.
+Integrate SlimServe, begin SGLang/llama.cpp adapters, complete the integrated Chat and Library experience, and broaden protocol compatibility.
 
-**User outcome:** SovereignStack recommends the best validated engine/profile and provides a first-party Chat, Library, Models, and Activity experience.
+**User outcome:** SovereignStack recommends the best validated engine/profile and provides a cohesive Chat, Library, Models, and Activity experience through the canonical web application.
 
 ### R4 — Offline platform expansion
 
@@ -76,9 +76,9 @@ flowchart LR
     R0 --> D --> H --> P --> L --> V --> S --> M
 
     D --> UX[Models and deployment UX]
-    H --> Setup[Desktop setup and launcher]
+    H --> Setup[Web setup and onboarding]
     L --> UX
-    UX --> Chat[First-party Chat and Library]
+    UX --> Chat[Integrated Chat and Library]
     D --> Router[Router and protocol expansion]
 ```
 
@@ -99,6 +99,8 @@ The UI may be prototyped earlier, but production model cards, GPU selection, dep
 - Change `improve-ux.md` from “implemented” to an honest partial status until its acceptance criteria pass.
 - Surface package prerequisite failures outside background log files.
 - Verify every visible portal destination; hide any destination that is not functional.
+- Fix embedded Chat authentication and credential/session handoff so Chat loads inside the management UI without direct-port access or manual key entry.
+- Audit portal-to-application rough spots, including broken routes, inconsistent branding, iframe sizing, and missing loading, error, or degraded states.
 - Add preliminary installation, first-use, API, privacy, troubleshooting, and known-limitations documentation.
 - Establish evaluator support, diagnostics, and support-bundle handling.
 - Add browser automation for the release-critical journeys.
@@ -112,7 +114,8 @@ The UI may be prototyped earlier, but production model cards, GPU selection, dep
 - Demo acceptance is functional stability and product visibility; speed, concurrency, and model quality are recorded but are not release gates for this tier.
 - First administrator created without host-side credential recovery.
 - Recommended model reaches ready state.
-- First chat succeeds.
+- An authenticated portal user opens Chat inside the management UI and sends the first prompt without visiting a direct service port or manually supplying a key.
+- Chat authentication uses a server-managed or short-lived same-origin session; administrator and gateway secrets are not exposed in iframe URLs or browser storage.
 - Document ingestion and cited retrieval succeed.
 - Gateway key can be issued and used for an OpenAI-compatible request.
 - Backup can be created and verified.
@@ -300,22 +303,21 @@ Preflight → Download → Verify → Stage → Drain → Load → Smoke test �
 - The 16 GB Mac demo journey passes on physical 16 GB hardware with no cloud provider and no memory-related restart loop.
 - Observed memory, first-token latency, and tokens per second are recorded even though they are not pass/fail thresholds for the demo tier.
 
-## M6 — Build the guided setup and native launcher
+## M6 — Complete guided web setup and onboarding
 
 **Priority:** P0  
 **Release:** R1
 
-### Desktop setup responsibilities
+### Installer and web setup responsibilities
 
 - Detect OS and architecture.
-- Detect Docker/Desktop or Engine status.
+- Detect Docker Desktop or Engine status.
 - Detect NVIDIA driver and container-toolkit state.
-- Display accelerator, RAM, disk, and network inventory.
+- Display accelerator, RAM, disk, and network inventory in the web application.
 - Provide exact remediation actions such as Open Docker, Retry, Choose storage, or Download diagnostics.
-- Persist progress across application restart and reboot where possible.
-- Start/stop the appliance and display status.
-- Open the canonical web application.
-- Provide native notifications, file dialogs, and deep links.
+- Persist setup and provisioning progress across browser refresh, Control restart, and reboot where possible.
+- Start the appliance and open the canonical web application.
+- Keep lifecycle controls, notifications, file selection, and product interaction in the web application rather than a separate native shell.
 
 ### Onboarding flow
 
@@ -325,15 +327,15 @@ Preflight → Download → Verify → Stage → Drain → Load → Smoke test �
 4. Review the recommended model/deployment plan
 5. Download and provision
 6. Validate readiness
-7. Send the first prompt
+7. Open integrated Chat and send the first prompt
 
 ### Acceptance gate
 
 - Ordinary desktop users do not need Terminal for supported installation.
-- Missing Docker/driver/toolkit produces a visible guided failure.
+- Missing Docker/driver/toolkit produces a visible guided failure from the installer or web application rather than only a background log.
 - Desktop defaults to local-only access without asking a networking question.
 - Headless installation presents a reachable private-LAN URL.
-- A new user reaches the first prompt without external documentation.
+- A new user reaches integrated Chat and sends the first prompt without external documentation, direct-port access, or manual key entry.
 
 ## M7 — Redesign the application information architecture
 
@@ -369,6 +371,8 @@ Preflight → Download → Verify → Stage → Drain → Load → Smoke test �
 ### Acceptance gate
 
 - Infrastructure destinations do not compete visually with Chat.
+- Chat loads inside the portal through an authenticated same-origin route; direct application ports and manual key entry are not part of normal use.
+- Embedded application surfaces share SovereignStack branding, navigation, sizing, and loading, error, and degraded states.
 - Embeddings are a Library implementation detail in normal mode.
 - Advanced embedding identity and index controls remain available to administrators.
 - Role-gated navigation works at desktop and mobile sizes.
@@ -443,7 +447,7 @@ A SlimServe profile is recommended only when it records:
 - Falling back to vLLM is explicit and does not silently alter the chosen model.
 - Performance claims cite the exact profile baseline.
 
-## M10 — Own the Chat and Library experience
+## M10 — Integrate and progressively own the Chat and Library experience
 
 **Priority:** P1; may proceed in parallel after stable route, library, and job APIs  
 **Release:** R3
@@ -471,11 +475,12 @@ A SlimServe profile is recommended only when it records:
 
 ### Transition rule
 
-AnythingLLM may remain as an internal ingestion/retrieval implementation temporarily, but no new user-facing product dependency should be added to its iframe UI.
+AnythingLLM may remain as the embedded chat, ingestion, and retrieval implementation when it satisfies SovereignStack authentication, same-origin routing, branding, navigation, and lifecycle-state contracts. New capabilities use stable internal APIs so components can be replaced later without changing the product surface.
 
 ### Acceptance gate
 
-- First-party Chat works without loading the AnythingLLM UI.
+- Integrated Chat works inside the canonical portal without direct service-port access or manual key entry.
+- The visible Chat and Library surfaces follow SovereignStack branding, navigation, permissions, and loading/error behavior regardless of their internal implementation.
 - File ingestion and retrieval continue using supported internal contracts.
 - Conversation and file permissions follow Sovereign Control identity.
 - Core Chat remains usable when Grafana, Phoenix, updates, or other optional tools are unavailable.
@@ -566,7 +571,7 @@ The customer-facing promise is an optional locally indexed web corpus, not a fix
 These journeys are product contracts, not incidental UI tests:
 
 1. 16 GB Mac demo install → ReAligned 2B Q4 + EmbeddingGemma → first chat → small document RAG → local API request
-2. Certified Mac install → first administrator → recommended model → first chat
+2. Certified Mac install → first administrator → embedded Chat opens through the portal without a direct port or manual key → first chat
 3. Headless install → reachable LAN URL → first administrator → first chat
 4. Alternative curated model selection
 5. Insufficient RAM/VRAM/disk detected before download
@@ -637,7 +642,7 @@ Measure locally and expose to administrators; transmit nothing without explicit 
 | ReAligned 2B is treated as the primary quality model for every deployment | Poor evaluation impression | Position it as the lightweight demo/first-chat model; recommend larger validated choices when hardware allows |
 | Memory estimates are presented as guarantees | OOM or poor performance | Label confidence and compare estimates with observed peaks |
 | SlimServe is marketed with universal multipliers | Credibility loss | Publish profile-specific reproducible benchmarks only |
-| AnythingLLM UI becomes permanent through incremental additions | Product never feels unified | Freeze visible feature investment and migrate through internal contracts |
+| Embedded AnythingLLM remains visibly disconnected from the portal | Product feels assembled and Chat fails in the canonical path | Enforce same-origin credential/session handoff, unified branding/navigation, and complete UI states; replace components only when integration cannot satisfy the product contract |
 | Router replacement drops policy features | API/security regression | Inventory and test every LiteLLM feature used before cutover |
 | Offline search begins with a storage SKU instead of requirements | Wrong architecture and cost | Define corpus, freshness, relevance, and update requirements first |
 | Supported hardware matrix expands faster than qualification | Release instability | Fail closed and add profiles only through release gates |
@@ -652,10 +657,11 @@ SovereignStack reaches the target when a first-time user on supported hardware c
 4. See what hardware is available and how it is allocated.
 5. Accept a reviewed model/engine/deployment plan without registry expertise.
 6. Understand download, verification, load, validation, and recovery progress.
-7. Send the first prompt and attach a file.
-8. Understand which model is active and why it fits.
-9. Issue an API key and redirect an existing application.
-10. Operate fully offline unless an administrator explicitly enables an external capability.
-11. Add users and manage access without exposing infrastructure tools.
-12. Update, repair, back up, restore, and diagnose the appliance without container access.
-13. Use advanced model, embedding, engine, and GPU controls when needed without exposing them to normal users.
+7. Open Chat inside the canonical portal without visiting a direct service port or manually supplying a key.
+8. Send the first prompt and attach a file.
+9. Understand which model is active and why it fits.
+10. Issue an API key and redirect an existing application.
+11. Operate fully offline unless an administrator explicitly enables an external capability.
+12. Add users and manage access without exposing infrastructure tools.
+13. Update, repair, back up, restore, and diagnose the appliance without container access.
+14. Use advanced model, embedding, engine, and GPU controls when needed without exposing them to normal users.

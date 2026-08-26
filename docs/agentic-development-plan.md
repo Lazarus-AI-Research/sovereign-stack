@@ -45,6 +45,17 @@ preferences, unavailable business context, or genuinely unresolved product inten
 Treat the current repository state as the implementation baseline. A release tag may be recorded for
 traceability, but it must not redefine "current" or imply that old release claims remain qualified.
 
+Known application decisions:
+
+- SovereignStack remains a web application on desktop, private LAN, and headless hosts; no separate native
+  application shell is required.
+- Native packages may perform host preflight, install and start the appliance, and open the canonical web application.
+- Fixing the embedded Chat credential/session handoff and the surrounding integration rough spots is P0 work.
+- Normal users must open Chat inside the management UI without visiting a direct service port or manually
+  supplying a key.
+- Embedded applications must use server-managed or short-lived same-origin sessions rather than exposing
+  administrator or gateway secrets to the browser.
+
 Known model-planning context:
 
 - The product requires a lightweight ReAligned model for offline first chat and the 16 GB Mac demo tier.
@@ -201,6 +212,8 @@ Confirm:
 - Required loading, empty, progress, degraded, error, offline, and recovery states.
 - Advanced-mode boundaries and role-gated navigation.
 - Required browser and device targets.
+- Authentication, credential ownership, same-origin routing, and session handoff for embedded application surfaces.
+- The conditions under which an embedded component should be integrated, progressively replaced, or fully owned.
 
 #### Agent autonomy
 
@@ -281,6 +294,11 @@ These are proposed defaults. The owner and main agent must confirm or revise the
 
 - Control owns product identity, desired state, deployment records, routes, jobs, and authorization.
 - The portal consumes Control APIs and never invents deployment, hardware, or engine state.
+- The web application is the canonical product surface; desktop packaging does not create a second native application.
+- Integrated Chat loads through an authenticated same-origin route without direct-port access or manual key entry.
+- Administrator and gateway secrets are never passed through iframe URLs or persisted in browser storage as
+  an integration workaround.
+- Embedded surfaces must follow SovereignStack branding, navigation, permissions, sizing, and loading/error behavior.
 - Hostd supplies host facts and fixed allowlisted host operations; it accepts no arbitrary command or path.
 - The restricted Docker proxy exposes only explicit lifecycle operations.
 - Engine-specific flags and process details remain inside engine adapters.
@@ -362,6 +380,8 @@ Verify UI changes against the real running portal:
 - Capture the relevant visual states.
 - Confirm all displayed status comes from real backend contracts.
 - Confirm failures offer direct actions rather than raw internal errors or log-only instructions.
+- Confirm an authenticated user can open Chat inside the portal without direct-port access or manual key entry.
+- Confirm embedded surfaces preserve session expiry, logout, role changes, and secret boundaries.
 
 Pixel similarity to a reference product is not the goal. Workflow clarity, state honesty, accessibility, and
 SovereignStack product coherence are the goals.
