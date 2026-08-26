@@ -1,18 +1,31 @@
 SHELL := /bin/bash
 VERSION := $(shell cat VERSION)
 REGISTRY := ghcr.io/lazarus-ai-research
+WEB_DIR := control/web
+WEB_DIST_INDEX := control/internal/web/dist/index.html
+WEB_DEPS_STAMP := $(WEB_DIR)/node_modules/.install-stamp
+WEB_SOURCES := $(shell find $(WEB_DIR)/src) \
+	$(WEB_DIR)/index.html \
+	$(WEB_DIR)/tsconfig.json \
+	$(WEB_DIR)/vite.config.ts
 
 .PHONY: help build web test test-go test-evals test-contracts test-scripts validate images compose-validate clean
 
 help: ## Show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
-build: ## Build Go services
+build: web ## Build the web frontend and Go services
 	cd control && go build ./...
 	cd docker-proxy && go build ./...
 
-web: ## Build the Control UI into control/internal/web/dist
-	cd control/web && npm install --no-fund --no-audit && npm run build
+web: $(WEB_DIST_INDEX) ## Build the Control UI when its inputs change
+
+$(WEB_DEPS_STAMP): $(WEB_DIR)/package.json $(WEB_DIR)/package-lock.json
+	cd $(WEB_DIR) && npm ci --no-fund --no-audit
+	touch $(WEB_DEPS_STAMP)
+
+$(WEB_DIST_INDEX): $(WEB_SOURCES) $(WEB_DEPS_STAMP)
+	cd $(WEB_DIR) && npm run build
 
 test: test-go test-evals test-contracts test-scripts ## Run all tests
 
